@@ -1,0 +1,13 @@
+#!/bin/bash
+# Start the Babel live wallpaper when the Babel theme is active, stop it otherwise.
+# Used as an Omarchy theme-set hook (theme slug in $1) and post-boot hook (no args).
+
+THEME=${1:-$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null)}
+LIVE="$HOME/.config/omarchy/themes/babel/live/babel-live.py"
+
+if [[ $THEME == babel ]]; then
+  pgrep -f "^(/usr/bin/)?python3 $LIVE\$" >/dev/null || setsid -f python3 "$LIVE" >/dev/null 2>&1
+else
+  pkill -f "^(/usr/bin/)?python3 $LIVE\$"
+fi
+exit 0

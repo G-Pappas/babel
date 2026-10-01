@@ -1,0 +1,340 @@
+#!/usr/bin/env python3
+"""babel-theme: set up and configure the Babel live theme for Omarchy.
+
+  babel-theme setup                 install the start/stop hooks and the Style > Babel menu
+  babel-theme uninstall             remove them again (and stop the live wallpaper)
+  babel-theme status [--json]       show the current settings
+  babel-theme cycle 1d              loop length: 1m, 10m, 1h, 6h, 1d, 1w, ...
+  babel-theme sky clock             clock | loop | dawn | day | sunset | night
+  babel-theme sky-loop 10m          how long a whole day takes when the sky loops
+  babel-theme weather live          live | off | clear | rain | snow | storm | fog
+  babel-theme background live       the drawn landscape
+  babel-theme background pick       choose a picture with the Omarchy image picker
+  babel-theme background FILE       use a picture
+  babel-theme toggle wonder NAME    switch a monument on or off
+  babel-theme toggle disaster NAME  switch a disaster on or off
+  babel-theme reset                 switch every wonder and disaster back on
+  babel-theme workers 9             smallest crew per monitor
+  babel-theme disaster-now          make the running wallpaper's disaster happen now
+  babel-theme edit                  open the settings file
+"""
+
+import json
+import os
+import shlex
+import shutil
+import signal
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+from engine.config import (CONFIG_PATH, DISASTERS, SKY_MODES, WEATHER_MODES, WONDERS, Config,  # noqa: E402
+                           parse_duration)
+
+THEME_LINK = Path.home() / ".config/omarchy/themes/babel/live"
+HOOKS = Path.home() / ".config/omarchy/hooks"
+MENU = Path.home() / ".config/omarchy/extensions/omarchy-menu.jsonc"
+BIN = Path.home() / ".local/bin/babel-theme"
+PLUGIN = Path.home() / ".config/omarchy/plugins/babel.live"
+ENGINE = HERE / "babel-live.py"
+BEGIN = "  // babel-live:begin (added by `babel-theme setup`, removed by `babel-theme uninstall`)"
+END = "  // babel-live:end"
+LOOPS = [("1m", "1 minute"), ("10m", "10 minutes"), ("1h", "1 hour"), ("6h", "6 hours"),
+         ("1d", "1 day"), ("1w", "1 week")]
+
+
+def notify(text):
+    print(text)
+    if shutil.which("notify-send") and os.environ.get("WAYLAND_DISPLAY"):
+        subprocess.run(["notify-send", "-a", "Babel", "Babel", text], check=False)
+
+
+def current_theme():
+    try:
+        return (Path.home() / ".local/state/omarchy/current/theme.name").read_text().strip()
+    except OSError:
+        return ""
+
+
+# ------------------------------------------------------------------ menu
+
+def menu_block():
+    cli = '"$HOME/.config/omarchy/themes/babel/live/babel-theme"'
+    conf = '"$HOME/.config/babel-live/config.toml"'
+
+    def has(line):
+        return f"grep -qxF {shlex.quote(line)} {conf}"
+
+    def row(key, **fields):
+        return f'  {json.dumps("style.babel" + key)}: {json.dumps(fields, ensure_ascii=False)},'
+
+    rows = [row("", icon="\uf1ad", label="Babel",
+                when="[[ $(cat ~/.local/state/omarchy/current/theme.name 2>/dev/null) == babel ]]"),
+            row(".loop", icon="\uf2f1", label="Loop length")]
+    for value, label in LOOPS:
+        rows.append(row(f".loop.{value}", icon="\uf017", label=label,
+                        checked=has(f'cycle = "{value}"'), action=f"{cli} cycle {value}"))
+    rows.append(row(".loop.custom", icon="\uf040", label="Other…", action=f"{cli} edit"))
+    rows.append(row(".background", icon="\uf03e", label="Background"))
+    rows.append(row(".background.live", icon="\uf185", label="Live landscape",
+                    checked=has('background = "live"'), action=f"{cli} background live"))
+    rows.append(row(".background.picture", icon="\uf03e", label="Picture…",
+                    checked="! " + has('background = "live"'), action=f"{cli} background pick"))
+    rows.append(row(".wonders", icon="\uf19c", label="Wonders"))
+    for name, label in WONDERS.items():
+        rows.append(row(f".wonders.{name}", icon="\uf19c", label=label,
+                        checked=has(f'  "{name}",'), action=f"{cli} toggle wonder {name}"))
+    rows.append(row(".disasters", icon="\uf0e7", label="Disasters"))
+    for name, label in DISASTERS.items():
+        rows.append(row(f".disasters.{name}", icon="\uf0e7", label=label,
+                        checked=has(f'  "{name}",'), action=f"{cli} toggle disaster {name}"))
+    rows.append(row(".sky", icon="\uf185", label="Sky"))
+    for mode in SKY_MODES:
+        label = {"clock": "Follow the clock", "loop": "Loop (day every sky_loop)"}.get(mode, mode.capitalize())
+        rows.append(row(f".sky.{mode}", icon="\uf185", label=label,
+                        checked=has(f'sky = "{mode}"'), action=f"{cli} sky {mode}"))
+    rows.append(row(".weather", icon="\uf0c2", label="Weather"))
+    for mode in WEATHER_MODES:
+        label = {"live": "Live (where you are)", "off": "Off"}.get(mode, mode.capitalize())
+        rows.append(row(f".weather.{mode}", icon="\uf0c2", label=label,
+                        checked=has(f'weather = "{mode}"'), action=f"{cli} weather {mode}"))
+    rows.append(row(".reset", icon="\uf0e2", label="Reset: all wonders and disasters on", action=f"{cli} reset"))
+    rows.append(row(".now", icon="\uf06d", label="Disaster now", action=f"{cli} disaster-now"))
+    rows.append(row(".edit", icon="\uf040", label="Edit settings file", action=f"{cli} edit"))
+    return [BEGIN] + rows + [END]
+
+
+def strip_block(lines):
+    out, inside = [], False
+    for line in lines:
+        if line.rstrip() == BEGIN.rstrip():
+            inside = True
+        elif inside and line.rstrip() == END.rstrip():
+            inside = False
+        elif not inside:
+            out.append(line)
+    return out
+
+
+def install_menu():
+    MENU.parent.mkdir(parents=True, exist_ok=True)
+    if MENU.exists():
+        text = MENU.read_text()
+        if BEGIN.strip() not in text:  # back up only before our first change
+            shutil.copy2(MENU, MENU.with_name(f"{MENU.name}.bak.{int(time.time())}"))
+        lines = strip_block(text.splitlines())
+    else:
+        lines = ["{", "}"]
+    at = next(i for i, line in enumerate(lines) if line.strip().startswith("{")) + 1
+    lines[at:at] = menu_block()
+    MENU.write_text("\n".join(lines) + "\n")
+
+
+def remove_menu():
+    if MENU.exists():
+        MENU.write_text("\n".join(strip_block(MENU.read_text().splitlines())) + "\n")
+
+
+# ------------------------------------------------------------------ live process
+
+def engine_pids():
+    pids = []
+    for proc in Path("/proc").iterdir():
+        if not proc.name.isdigit():
+            continue
+        try:
+            argv = (proc / "cmdline").read_bytes().split(b"\0")
+        except OSError:
+            continue
+        if len(argv) >= 2 and Path(argv[1].decode(errors="replace")).resolve() == ENGINE and b"--window" not in argv:
+            pids.append(int(proc.name))
+    return pids
+
+
+def run_hook(theme):
+    subprocess.run(["bash", str(HERE / "babel-live-hook"), theme], check=False)
+
+
+# ------------------------------------------------------------------ commands
+
+def cmd_setup():
+    for event in ("theme-set", "post-boot"):
+        d = HOOKS / f"{event}.d"
+        d.mkdir(parents=True, exist_ok=True)
+        link = d / "babel-live"
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(THEME_LINK / "babel-live-hook")
+    Config().save()  # normalise the settings file so the menu can read it
+    install_menu()
+    # the top-bar widget (it hides itself whenever another theme is active)
+    if PLUGIN.is_symlink() or not PLUGIN.exists():
+        if PLUGIN.is_symlink():
+            PLUGIN.unlink()
+        PLUGIN.symlink_to(THEME_LINK / "plugin")
+        if shutil.which("omarchy"):
+            subprocess.run(["omarchy-shell", "shell", "rescanPlugins"], check=False, capture_output=True)
+            time.sleep(1)
+            subprocess.run(["omarchy", "plugin", "enable", "babel.live"], check=False, capture_output=True)
+    if BIN.parent.is_dir():
+        if BIN.is_symlink() or BIN.exists():
+            BIN.unlink()
+        BIN.symlink_to(THEME_LINK / "babel-theme")
+    if current_theme() == "babel":
+        run_hook("babel")
+    notify("Set up. Activate with `omarchy theme set babel`; settings are on the bar icon and in Style > Babel.")
+
+
+def cmd_uninstall():
+    run_hook("none")
+    for event in ("theme-set", "post-boot"):
+        link = HOOKS / f"{event}.d" / "babel-live"
+        if link.is_symlink() or link.exists():
+            link.unlink()
+    remove_menu()
+    if PLUGIN.is_symlink():
+        if shutil.which("omarchy"):
+            subprocess.run(["omarchy", "plugin", "disable", "babel.live"], check=False, capture_output=True)
+        PLUGIN.unlink()
+    if BIN.is_symlink():
+        BIN.unlink()
+    notify("Removed the hooks and the menu. Settings stay in " + str(CONFIG_PATH))
+
+
+def weather_now():
+    """The last live report, e.g. "Lisbon: rain"."""
+    try:
+        d = json.loads((Path.home() / ".cache/babel-live/weather.json").read_text())
+        return f"{d.get('place') or 'here'}: {d['live']['kind']}"
+    except (OSError, ValueError, KeyError):
+        return ""
+
+
+def cmd_status(cfg, as_json=False):
+    if as_json:
+        try:
+            live = json.loads((Path.home() / ".local/state/babel-live/live.json").read_text())
+        except (OSError, ValueError):
+            live = {}
+        print(json.dumps({
+            "active": current_theme() == "babel", "running": bool(engine_pids()),
+            "cycle": cfg.cycle_text, "sky": cfg.sky, "skyLoop": cfg.sky_loop_text,
+            "background": cfg.background, "workers": cfg.workers, "weather": cfg.weather,
+            "weatherNow": weather_now(),
+            "wonders": [{"id": k, "label": v, "on": k in cfg.wonders} for k, v in WONDERS.items()],
+            "disasters": [{"id": k, "label": v, "on": k in cfg.disasters} for k, v in DISASTERS.items()],
+            "monitors": [dict(m, label=WONDERS.get(m.get("monument"), m.get("monument")))
+                         for m in live.get("monitors", [])],
+        }))
+        return
+    print(f"theme active : {current_theme() == 'babel'}  (running: {bool(engine_pids())})")
+    print(f"loop length  : {cfg.cycle_text}")
+    print(f"sky          : {cfg.sky}" + (f" (a day every {cfg.sky_loop_text})" if cfg.sky == "loop" else ""))
+    print(f"background   : {cfg.background}")
+    print(f"weather      : {cfg.weather}" + (f" ({weather_now()})" if cfg.weather == "live" and weather_now() else ""))
+    print(f"workers      : {cfg.workers}")
+    print("wonders      : " + ", ".join(WONDERS[w] for w in cfg.wonders))
+    print("disasters    : " + ", ".join(DISASTERS[d] for d in cfg.disasters))
+
+
+def pick_picture(cfg):
+    own = Path.home() / ".config/omarchy/backgrounds/babel"
+    own.mkdir(parents=True, exist_ok=True)
+    dirs = [own, Path.home() / "Pictures"]
+    dirs += sorted(Path("/usr/share/omarchy/themes").glob("*/backgrounds"))
+    dirs += sorted((Path.home() / ".config/omarchy/themes").glob("*/backgrounds"))
+    args = ["omarchy-menu-images", "--filterable", "--lazy-thumbnails"]
+    if cfg.background != "live":
+        args += ["--selected", cfg.background]
+    out = subprocess.run(args + [str(d) for d in dirs if d.is_dir()], capture_output=True, text=True)
+    return out.stdout.strip()
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__)
+        return 0
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "setup":
+        return cmd_setup()
+    if cmd == "uninstall":
+        return cmd_uninstall()
+    cfg = Config()
+    if cmd == "status":
+        return cmd_status(cfg, "--json" in rest)
+    if cmd == "sky-loop" and rest:
+        parse_duration(rest[0])
+        cfg.sky_loop_text = rest[0]
+        cfg.save()
+        return notify(f"A whole day every {rest[0]}")
+    if cmd == "cycle" and rest:
+        parse_duration(rest[0])
+        cfg.cycle_text = rest[0]
+        cfg.save()
+        return notify(f"Loop length: {rest[0]}")
+    if cmd == "sky" and rest and rest[0] in SKY_MODES:
+        cfg.sky = rest[0]
+        cfg.save()
+        return notify(f"Sky: {rest[0]}")
+    if cmd == "weather" and rest and rest[0] in WEATHER_MODES:
+        cfg.weather = rest[0]
+        cfg.save()
+        return notify("Weather: live, where you are" if rest[0] == "live" else f"Weather: {rest[0]}")
+    if cmd == "workers" and rest:
+        cfg.workers = max(2, min(30, int(rest[0])))
+        cfg.save()
+        return notify(f"Crew: at least {cfg.workers} workers")
+    if cmd == "background" and rest:
+        choice = rest[0]
+        if choice == "pick":
+            choice = pick_picture(cfg)
+            if not choice:
+                return 0
+        if choice != "live":
+            path = Path(choice).expanduser().resolve()
+            if not path.is_file():
+                print(f"no such picture: {choice}")
+                return 1
+            choice = str(path)
+        cfg.background = choice
+        cfg.save()
+        return notify("Background: live landscape" if choice == "live" else f"Background: {Path(choice).name}")
+    if cmd == "toggle" and len(rest) == 2 and rest[0] in ("wonder", "disaster"):
+        names, chosen = (WONDERS, cfg.wonders) if rest[0] == "wonder" else (DISASTERS, cfg.disasters)
+        name = rest[1]
+        if name not in names:
+            print(f"unknown {rest[0]} {name!r}; choose from: {', '.join(names)}")
+            return 1
+        if name in chosen:
+            if len(chosen) == 1:
+                return notify(f"Keep at least one {rest[0]} switched on.")
+            chosen.remove(name)
+            state = "off"
+        else:
+            chosen.append(name)
+            state = "on"
+        cfg.save()
+        return notify(f"{names[name]}: {state}")
+    if cmd == "reset":
+        cfg.wonders, cfg.disasters = list(WONDERS), list(DISASTERS)
+        cfg.save()
+        return notify("Every wonder and disaster is switched on again.")
+    if cmd == "disaster-now":
+        pids = engine_pids()
+        for pid in pids:
+            os.kill(pid, signal.SIGUSR1)
+        return notify("Here it comes…" if pids else "The live wallpaper isn't running.")
+    if cmd == "edit":
+        editor = ["omarchy-launch-config-editor"] if shutil.which("omarchy-launch-config-editor") \
+            else [os.environ.get("EDITOR", "nano")]
+        return subprocess.run(editor + [str(CONFIG_PATH)], check=False).returncode
+    print(__doc__)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]) or 0)

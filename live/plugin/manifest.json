@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "babel.live",
+  "name": "Babel",
+  "version": "1.0.0",
+  "author": "babel",
+  "description": "Settings for the Babel live theme: loop length, sky, background, wonders and disasters",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "Babel",
+    "description": "Loop length, sky, background, wonders and disasters for the Babel live theme",
+    "category": "Info",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

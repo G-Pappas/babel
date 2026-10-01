@@ -4,10 +4,12 @@
 
 THEME=${1:-$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null)}
 LIVE="$HOME/.config/omarchy/themes/babel/live/babel-live.py"
+REAL=$(readlink -f "$LIVE")
+MATCH="^(/usr/bin/)?python3 ($LIVE|$REAL)\$"
 
 if [[ $THEME == babel ]]; then
-  pgrep -f "^(/usr/bin/)?python3 $LIVE\$" >/dev/null || setsid -f python3 "$LIVE" >/dev/null 2>&1
+  pgrep -f "$MATCH" >/dev/null || setsid -f python3 "$REAL" >/dev/null 2>&1
 else
-  pkill -f "^(/usr/bin/)?python3 $LIVE\$"
+  pkill -f "$MATCH"
 fi
 exit 0

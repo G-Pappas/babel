@@ -23,6 +23,9 @@ the world on your desktop, block by block. Then a monster flattens it. Then they
   Someone plays the guitar while others dance or clap along, talk, drink, throw another log
   on, and late at night doze off by the fire or turn in at the container. Thunderstorms send
   them to shelter by the site container.
+- **Umbrellas.** About half the crew carry one. In the rain they open it whenever they have a
+  hand free, and when a disaster strikes in daylight, some of those up on the building open it
+  and jump, drifting down with the wind.
 - **The giant ape holds on to what's really there.** It climbs real walls, hauls itself onto
   low roofs, scrambles up pyramids, and drops when the blocks it holds are smashed. Breath,
   fire and heat-rays stop at the first stone they hit and burn their way in.

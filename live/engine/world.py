@@ -528,6 +528,9 @@ class World:
             x = self.fire_x - side * self.rng.uniform(20, 66) * self.u
         return max(4 * self.u, min(self.W - 4 * self.u, x))
 
+    def raining(self):
+        return self.wxe["rain"] > .2
+
     def campfire_on(self):
         return self.night and self.fire_level > .3 and not (self.storm() and self.night_shift())
 
@@ -611,7 +614,10 @@ class World:
         for w in self.workers:
             w.lucky = w in lucky
             away = 1 if w.x > d.origin_x else -1
-            w.assign(w.job_panic(away))
+            if w.level > 0 and w.has_umbrella and not self.night and self.rng.random() < .7:
+                w.gen, w.busy = w.job_glide(-1 if w.x < self.center else 1), False  # jump from where they stand
+            else:
+                w.assign(w.job_panic(away))
             w.busy = False
 
     def knock(self, b, vx, vy=0.0, abduct=False):
@@ -1249,7 +1255,8 @@ class World:
         cr.mask_surface(self.rubble, 0, 0)
         for w in self.workers:
             if not w.hidden:
-                draw_person(cr, w.x, w.y, w.f, w.pose, w.ph, carry=w.carry, poles=w.poles)
+                draw_person(cr, w.x, w.y, w.f, w.pose, w.ph, carry=w.carry, poles=w.poles,
+                            umbrella=w.umbrella, wind=self.wxe["wind"])
                 if w.held:
                     hx, hy = w.held
                     bw, bh = self.mon.bw * u, self.mon.bh * u

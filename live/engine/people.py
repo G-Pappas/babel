@@ -13,6 +13,9 @@ WALK, CARRY_WALK, CLIMB, RUN = 20.0, 15.0, 10.0, 46.0
 THIGH, SHIN, TORSO, UPPER, FORE = 4.6, 4.4, 6.2, 3.4, 3.2
 SEAT_H = 3.2   # height of a log or crate to sit on
 SEATED = ("sit", "sit_talk", "sit_drink", "sit_clap", "guitar")
+# poses that leave a hand free for an umbrella
+UMBRELLA_POSES = ("walk", "stand", "talk", "drink", "warm", "cheer", "dance", "dance2",
+                  "sit", "sit_talk", "sit_drink", "float")
 
 
 def _seg(x, y, angle, length, f):
@@ -20,8 +23,9 @@ def _seg(x, y, angle, length, f):
     return x + math.sin(angle) * length * f, y + math.cos(angle) * length
 
 
-def draw_person(cr, x, y, f, pose, ph, carry=0, rot=0.0, lift=0.0, poles=0):
-    """Silhouette worker with a hard hat; (x, y) are the feet, f the facing."""
+def draw_person(cr, x, y, f, pose, ph, carry=0, rot=0.0, lift=0.0, poles=0, umbrella=0.0, wind=0.0):
+    """Silhouette worker with a hard hat; (x, y) are the feet, f the facing.
+    umbrella: how far an umbrella held overhead is open (0 = none)."""
     if pose == "lie":  # asleep on the ground, head towards f, face up
         cr.save()
         cr.translate(x - f * 8, y - 1.7)
@@ -105,6 +109,9 @@ def draw_person(cr, x, y, f, pose, ph, carry=0, rot=0.0, lift=0.0, poles=0):
     elif pose == "tumble":
         legs = [(.9 + s, .4), (-.6 - s, -.2)]
         arms = [(2.2 + c, 2.6), (-2.0 - c, -2.4)]
+    elif pose == "float":  # hanging from an umbrella, legs dangling
+        legs = [(.3 + .15 * s, .15), (-.2 - .15 * s, -.05)]
+        arms = [(2.7, 3.0), (.7 + .3 * s, 1.1 + .3 * s)]
     elif pose == "lying":
         legs = [(.03, 0), (-.03, 0)]
         arms = [(.1, .15), (-.05, .05)]
@@ -112,6 +119,8 @@ def draw_person(cr, x, y, f, pose, ph, carry=0, rot=0.0, lift=0.0, poles=0):
         legs = [(.06, 0), (-.06, 0)]
         arms = [(.12, .2), (-.05, .05)]
 
+    if umbrella > .02:  # the front hand holds the umbrella up
+        arms = [(2.75, 3.05)] + list(arms[1:])
     # place the hip so the lowest foot touches y (or, seated, on a seat SEAT_H high)
     drops = [math.cos(t) * THIGH + math.cos(k) * SHIN for t, k in legs]
     hip_y = y - max(drops) if pose not in SEATED else y - SEAT_H
@@ -174,6 +183,8 @@ def draw_person(cr, x, y, f, pose, ph, carry=0, rot=0.0, lift=0.0, poles=0):
         cr.move_to(hip_x + 9.4 * f, hip_y - 8.9)
         cr.line_to(hip_x + 10.4 * f, hip_y - 10.0)
         cr.stroke()
+    if umbrella > .02:
+        draw_umbrella(cr, hands[0][0], hands[0][1], umbrella, wind)
     if pose in ("drink", "sit_drink"):  # a mug in the drinking hand
         cr.rectangle(hands[0][0] - .7, hands[0][1] - 1.2, 1.4, 1.6)
         cr.fill()
@@ -194,6 +205,30 @@ def draw_person(cr, x, y, f, pose, ph, carry=0, rot=0.0, lift=0.0, poles=0):
     cr.restore()
 
 
+def draw_umbrella(cr, hx, hy, k, wind):
+    """Shaft up from the hand, canopy opening with k, leaning into the wind."""
+    lean = -.35 * wind
+    tx, ty = hx + math.sin(lean) * 8.5, hy - math.cos(lean) * 8.5
+    cr.set_line_width(.8)
+    cr.move_to(hx, hy + 1)
+    cr.line_to(tx, ty - 1.2)
+    cr.stroke()
+    cr.save()
+    cr.translate(tx, ty)
+    cr.rotate(lean)
+    half = 1.2 + 6.3 * k
+    cr.move_to(-half, 0)  # a dome with a scalloped rim
+    cr.curve_to(-half, -3.6 * k - .6, half, -3.6 * k - .6, half, 0)
+    n = 4
+    for i in range(n, 0, -1):
+        x0 = -half + 2 * half * i / n
+        x1 = -half + 2 * half * (i - 1) / n
+        cr.curve_to(x0 - .25 * (x0 - x1), -.9 * k, x1 + .25 * (x0 - x1), -.9 * k, x1, 0)
+    cr.close_path()
+    cr.fill()
+    cr.restore()
+
+
 class Worker:
     def __init__(self, world, x, rng):
         self.w = world
@@ -209,6 +244,9 @@ class Worker:
         self.hidden = False
         self.busy = False      # on a delivery job
         self.held = None       # (x, y) of a block on its way into the wall
+        self.has_umbrella = rng.random() < .55
+        self.umbrella = 0.0    # how far it's open
+        self.gliding = False   # jumped off the building holding it
         self.poles = 0         # ladder sections being carried
         self.leaving = False   # walking off because the crew got smaller
         self.gone = False
@@ -220,12 +258,15 @@ class Worker:
         self.x, self.y, self.level = x, self.w.ground, 0
         self.carry = self.poles = 0
         self.held = None
-        self.busy = self.hidden = False
+        self.busy = self.hidden = self.gliding = False
         self.gen = self.job_idle()
 
     # ---- frame update ----
     def tick(self, dt):
         self.dt = dt
+        want = self.gliding or (self.has_umbrella and self.w.raining() and not self.carry and not self.poles
+                                and self.pose in UMBRELLA_POSES)
+        self.umbrella = max(0.0, min(1.0, self.umbrella + (2.5 if want else -3.0) * min(dt, .1)))
         try:
             next(self.gen)
         except StopIteration:
@@ -586,6 +627,32 @@ class Worker:
             self.hidden = False
         yield from self.pause(rng.uniform(2, 3), "stretch")
 
+    def job_glide(self, away):
+        """Daytime, up on the building, umbrella in hand: open it and jump."""
+        w = self.w
+        self.held = None
+        self.carry = self.poles = 0
+        self.gliding = True
+        self.f = away
+        yield from self.pause(w.rng.uniform(.3, 1.0), "stand")  # a moment's hesitation
+        vx, vy = away * w.rng.uniform(22, 34), -w.rng.uniform(25, 40)  # the leap
+        sway = w.rng.uniform(0, 6)
+        while self.y < w.ground:
+            vy = min(vy + 260 * self.dt, 20.0)  # the umbrella catches the air
+            drift = w.wxe["wind"] * 25 + math.sin(self.ph * .7 + sway) * 6
+            vx += (drift - vx) * min(1.0, self.dt * 1.5)
+            self.x += vx * self.dt
+            self.y = min(w.ground, self.y + vy * self.dt)
+            self.pose = "float"
+            self.ph += self.dt * 4
+            yield
+        self.gliding = False
+        self.level = 0
+        yield from self.walk_to(-15 if away < 0 else w.W + 15, RUN * (1.25 if self.lucky else 1))
+        self.hidden = True
+        while True:
+            yield
+
     def job_panic(self, away):
         self.held = None
         self.poles = 0
@@ -609,5 +676,5 @@ class Worker:
         yield
 
     def job_return(self, x):
-        self.hidden = False
+        self.hidden = self.gliding = False
         yield from self.walk_to(x)

@@ -255,15 +255,22 @@ def run_gtk(args):
         if gap > 20:  # the machine was asleep: jump the scene to where it should be
             for sc in scenes:
                 sc.world.resume(gap)
-        dt = min(0.25, gap)
+            gap = 1 / FPS
         for sc in scenes:
+            # never drop time (that would put the crew behind schedule): a stalled
+            # frame is made up in small steps, so everyone keeps the same pace
+            sc.backlog += gap
+            step = 1 / FPS if sc.visible else HIDDEN_STEP
+            if sc.backlog < step * .9:
+                continue
+            while sc.backlog > 0.25:
+                sc.world.update(0.25)
+                sc.backlog -= 0.25
             if sc.visible:
-                sc.frame(dt, now)
-            else:  # nobody can see a covered monitor: simulate it at a lower rate, draw nothing
-                sc.backlog += dt
-                if sc.backlog >= HIDDEN_STEP:
-                    sc.world.update(min(0.25, sc.backlog))
-                    sc.backlog = 0.0
+                sc.frame(sc.backlog, now)
+            else:  # nobody can see a covered monitor: simulate it, draw nothing
+                sc.world.update(sc.backlog)
+            sc.backlog = 0.0
         if not args.window:
             write_status(now)
         return True

@@ -17,7 +17,7 @@ from .config import load_state, save_state
 from .disasters import ABDUCT, DISASTERS
 from .monuments import BEACONS, MONUMENTS, Monument
 from .people import CARRY_WALK, CLIMB, SEAT_H, WALK, Worker, draw_person
-from .site import INSTALL_TIME, Crane, Scaffold, Truck
+from .site import Crane, Scaffold, Truck
 from . import astro
 from .sky import FIXED_HOURS, Landscape, mix, palette
 
@@ -189,6 +189,7 @@ class World:
             if self.base_timelapse <= MAX_TIMELAPSE:
                 break
         self.timelapse = self.base_timelapse
+        self.extra, self.hire_t = 0, 0.0  # helpers hired while behind schedule
         m, W = self.mon, self.W
         self.monument_mask = cairo.ImageSurface(cairo.FORMAT_A8, m.w, m.h)
         self.mcr = cairo.Context(self.monument_mask)
@@ -296,19 +297,28 @@ class World:
         return total / len(sample) + 0.9 + 0.7 * MAX_CARRY
 
     def plan_crew(self):
-        """Crew size and time-lapse factor needed to finish the build on time."""
-        rate = len(self.mon.bricks) / self.sched[2][-1]  # per working second
+        """Crew size and time-lapse factor needed to finish the build on time. The
+        factor is fixed for the whole cycle: the crew never visibly speeds up."""
+        bricks = self.mon.bricks
+        working = self.sched[2][-1]
+        rate = len(bricks) / working  # per working second
         # workers busy full time, plus slack for waiting on floors, ladders and trucks
         need = rate * self.trip / MAX_CARRY * 2.0
         crew = max(self.config.workers, min(MAX_CREW, math.ceil(need)))
-        return crew, max(1.0, need / crew)
+        # the levels go up one after another (finish the floor, climb, set): that serial
+        # work may spill over the schedule into the time the finished monument stands
+        levels = max(1, math.ceil((self.ground - self.mtop) / self.lift))
+        serial = sum(2 * lv * self.lift / CLIMB + 4 for lv in range(1, levels + 1))
+        slack = max(1.0, self.cycle_len() - self.build_time())
+        slow = min(MAX_TIMELAPSE * 4, serial * 1.2 / slack)
+        return crew, max(1.0, need / crew, slow)
 
     def staff(self):
         """Hire workers walking in from the edges, or send extra idle ones home."""
         active = [w for w in self.workers if not w.leaving]
-        for _ in range(self.crew - len(active)):
+        for _ in range(self.crew + self.extra - len(active)):
             self.spawn_worker()
-        extra = len(active) - self.crew
+        extra = len(active) - self.crew - self.extra
         for w in active:
             if extra <= 0:
                 break
@@ -713,11 +723,6 @@ class World:
                     self.staff()
                 if self.phase == "build" and self.placed >= len(self.mon.bricks):
                     self.phase, self.phase_t = "admire", 0.0
-                    # speed up enough to have the scaffold down before the cycle ends
-                    top = max(self.scaffold.built)
-                    work = top * INSTALL_TIME + 2 * top * self.lift / CLIMB + 15
-                    left = max(1.0, self.cycle_start + self.cycle_len() - now)
-                    self.timelapse = min(MAX_TIMELAPSE * 4, max(self.timelapse, work / left * 1.3))
         elif self.phase == "disaster":
             self.update_disaster(dt)
         elif self.phase == "aftermath":
@@ -777,19 +782,16 @@ class World:
     def dispatch(self, now, dt):
         bricks = self.mon.bricks
         n = len(bricks)
+        # falling behind never makes anyone hurry: an extra hand walks in to help,
+        # and goes home again once the work has caught up
         lag = self.due(now) - self.placed
-        if lag > max(4, n // 50):  # falling behind: speed the crew up a little
-            self.timelapse = min(MAX_TIMELAPSE * 4, self.timelapse * (1 + .25 * dt))
-        elif lag <= 0 and self.timelapse > self.base_timelapse:
-            self.timelapse = max(self.base_timelapse, self.timelapse * (1 - .1 * dt))
-        if self.phase == "build" and self.placed < n:
-            # the top levels go up one after another (finish the floor, climb, set): make
-            # sure that serial work still fits before the build is due to be done
-            top = max(self.brick_level(b) for b in bricks[-40:])
-            serial = sum(2 * lv * self.lift / CLIMB + 4 for lv in range(self.lowest_open, top + 1))
-            left = self.sched[2][-1] - self.work_done(now)
-            if left > 0:
-                self.timelapse = min(MAX_TIMELAPSE * 4, max(self.timelapse, serial / left * 1.2))
+        self.hire_t += dt
+        if lag > max(4, n // 50) and self.hire_t > 10 and self.crew + self.extra < MAX_CREW:
+            self.extra += 1
+            self.hire_t = 0.0
+        elif lag <= 0 and self.extra and self.hire_t > 30:
+            self.extra -= 1
+            self.hire_t = 0.0
         while self.assigned < n and (bricks[self.assigned].taken or bricks[self.assigned].placed):
             self.assigned += 1
         if (self.night or self.storm()) and self.night_shift():

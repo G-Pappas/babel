@@ -94,7 +94,12 @@ class Weather:
                 return float(loc["latitude"]), float(loc["longitude"]), loc.get("name", "")
             name = loc.get("name", "")
         except (OSError, ValueError, TypeError):
-            name = self._get("https://wttr.in/?format=%l").split(",")[0].strip()
+            name = self._get("https://wttr.in/?format=%l").strip()
+            try:  # wttr.in answers with "lat,lon" for an IP it can only place on the map
+                lat, lon = (float(v) for v in name.split(","))
+                return lat, lon, ""
+            except ValueError:
+                name = name.split(",")[0].strip()
         if not name:
             return None
         found = json.loads(self._get("https://geocoding-api.open-meteo.com/v1/search?count=1&name="
@@ -105,19 +110,20 @@ class Weather:
     def _fetch(self):
         try:
             loc = self._location()
-            if loc:
-                lat, lon, place = loc
-                data = json.loads(self._get(
-                    "https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s"
-                    "&current=weather_code,cloud_cover,wind_speed_10m,wind_direction_10m" % (lat, lon)))
-                cur = data["current"]
-                self.live = from_wmo(cur["weather_code"], cur.get("cloud_cover"),
-                                     cur.get("wind_speed_10m"), cur.get("wind_direction_10m"))
-                self.place = place
-                self.fetched = time.time()
-                CACHE.parent.mkdir(parents=True, exist_ok=True)
-                CACHE.write_text(json.dumps({"live": self.live, "place": place, "time": self.fetched,
-                                             "code": cur["weather_code"]}))
+            if not loc:
+                raise ValueError("location not found")
+            lat, lon, place = loc
+            data = json.loads(self._get(
+                "https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s"
+                "&current=weather_code,cloud_cover,wind_speed_10m,wind_direction_10m" % (lat, lon)))
+            cur = data["current"]
+            self.live = from_wmo(cur["weather_code"], cur.get("cloud_cover"),
+                                 cur.get("wind_speed_10m"), cur.get("wind_direction_10m"))
+            self.place = place
+            self.fetched = time.time()
+            CACHE.parent.mkdir(parents=True, exist_ok=True)
+            CACHE.write_text(json.dumps({"live": self.live, "place": place, "time": self.fetched,
+                                         "code": cur["weather_code"]}))
         except Exception as e:  # offline, timeouts, odd answers: keep the last report
             print(f"babel-live: weather unavailable ({e})")
             self.fetched = time.time() - REFRESH + 300  # try again in five minutes

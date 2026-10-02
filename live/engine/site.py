@@ -114,13 +114,15 @@ class Scaffold:
                 cr.move_to(lo, y)
                 cr.line_to(hi, y)
         cr.stroke()
-        # planks bridging openings (arches, colonnades) at every level that's up
+        # planks bridging openings (arches, colonnades) at every level that's up, once
+        # the stone on both sides is there to rest them on
         cr.set_line_width(1.6 * u)
         for lv in range(1, max(self.built) + 1):
             y = w.level_y(lv)
             for x0, x1 in w.deck_gaps[lv]:
-                cr.move_to(x0, y)
-                cr.line_to(x1, y)
+                if w.solid_near(x0 - 2 * u, y + 2 * u, 2.5 * u) and w.solid_near(x1 + 2 * u, y + 2 * u, 2.5 * u):
+                    cr.move_to(x0, y)
+                    cr.line_to(x1, y)
         cr.stroke()
 
     def draw_racks(self, cr):

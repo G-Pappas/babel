@@ -572,6 +572,16 @@ class World:
         n = len(col) - len(col.lstrip(b"\0"))
         return None if n == len(col) else self.oy + n
 
+    def solid_near(self, x, y, r):
+        """Is any standing block within r of (x, y)?"""
+        data, stride = self._mask()
+        m = self.mon
+        c0, c1 = max(0, int(x - r - self.ox)), min(m.w - 1, int(x + r - self.ox))
+        for row in range(max(0, int(y - r - self.oy)), min(m.h - 1, int(y + r - self.oy)) + 1):
+            if c0 <= c1 and any(data[row * stride + c0:row * stride + c1 + 1]):
+                return True
+        return False
+
     def trace(self, x0, y0, x1, y1):
         """First point on the segment that hits a standing block, or None."""
         data, stride = self._mask()

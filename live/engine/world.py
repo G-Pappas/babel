@@ -16,7 +16,7 @@ import cairo
 from .config import load_state, save_state
 from .disasters import ABDUCT, DISASTERS
 from .monuments import BEACONS, MONUMENTS, Monument
-from .people import CARRY_WALK, CLIMB, WALK, Worker, draw_person
+from .people import CARRY_WALK, CLIMB, SEAT_H, WALK, Worker, draw_person
 from .site import INSTALL_TIME, Crane, Scaffold, Truck
 from . import astro
 from .sky import FIXED_HOURS, Landscape, mix, palette
@@ -101,6 +101,11 @@ class World:
         self.t_anim = 0.0
         self.rest_x = W * (.07 if self.rng.random() < .5 else .93)  # the crew's container stays put
         self.fire_x = self.rest_x + (55 if self.rest_x < W / 2 else -55) * self.u  # their campfire
+        self.camp_seats, self.rest_seats = self.make_seats()
+        self.seats = {}           # worker -> seat x it has claimed
+        self.guitarist = None     # whoever is playing tonight
+        self.stoker = None        # whoever is putting a log on
+        self.fire_boost = 0.0     # flare-up after a new log
         self.make_scenery()
         self.trucks = []
         self.workers = [Worker(self, self.rng.uniform(W * .3, W * .7), self.rng) for _ in range(config.workers)]
@@ -248,18 +253,16 @@ class World:
             cr.sections = cr.wanted_sections() if not done else 0.0
 
     def resume(self, gap):
-        """The monitor was covered for `gap` seconds; catch up before it's seen again."""
+        """The machine was asleep for `gap` seconds: put up what would have been built.
+        Everyone climbs down where they are and picks up from there."""
         if self.phase not in ("build", "admire"):
-            return  # a disaster in progress simply waits for its audience
-        if gap <= 20:
-            for _ in range(int(gap * 15)):
-                self.update(1 / 15)
-            return
+            return  # a disaster in progress simply carries on
         for b in self.mon.bricks:
             b.taken = b.placed
         self.particles = [p for p in self.particles if p.kind != "smoke"]
         for w in self.workers:
-            w.reset(self.rng.uniform(self.site[0] - 60 * self.u, self.site[1] + 60 * self.u))
+            if not w.hidden and not w.leaving:
+                w.reset(w.x)
         self.catch_up(self.due(self.clock()))
         self.assigned = self.taken = self.placed
         self.settle_site()
@@ -473,6 +476,105 @@ class World:
         w.assign(w.job_return(self.rng.uniform(self.site[0], self.site[1])))
         self.workers.append(w)
 
+    # ------------------------------------------------------------ campsite
+    def make_seats(self):
+        """Logs round the fire pit and crates by the container, so nobody sits on air."""
+        u, fx, rx = self.u, self.fire_x, self.rest_x
+        toward = 1 if fx > rx else -1               # from the container to the fire
+        box = (rx - 26 * u, rx + 26 * u)            # keep clear of the container itself
+        camp = []
+        for d in (16, 26, 36, 47, 58):
+            for side in (toward, -toward):
+                x = fx + side * (d + self.rng.uniform(-2, 2)) * u
+                if not box[0] <= x <= box[1] and 4 * u < x < self.W - 4 * u:
+                    camp.append(x)
+        rest = [rx - toward * (32 + 9 * i) * u for i in range(3)]
+        rest = [x for x in rest if 4 * u < x < self.W - 4 * u]
+        return camp, rest
+
+    def claim_seat(self, worker, seats):
+        mine = self.seats.get(worker)
+        if mine in seats:
+            return mine
+        taken = set(self.seats.values())
+        free = [x for x in seats if x not in taken]
+        if not free:
+            return None
+        x = min(free, key=lambda s: abs(s - worker.x) + self.rng.uniform(0, 25) * self.u)
+        self.seats[worker] = x
+        return x
+
+    def release_seat(self, worker):
+        self.seats.pop(worker, None)
+
+    def seat_of(self, worker):
+        return self.seats.get(worker)
+
+    def camp_standing_spot(self, worker):
+        """No log left: stand in the second row, a little further from the fire."""
+        side = self.rng.choice((-1, 1))
+        x = self.fire_x + side * self.rng.uniform(20, 66) * self.u
+        if abs(x - self.rest_x) < 26 * self.u:
+            x = self.fire_x - side * self.rng.uniform(20, 66) * self.u
+        return max(4 * self.u, min(self.W - 4 * self.u, x))
+
+    def campfire_on(self):
+        return self.night and self.fire_level > .3 and not (self.storm() and self.night_shift())
+
+    def late_night(self):
+        if self.config.sky not in ("clock", "loop"):
+            return False
+        h = self.sky_hour(self.clock()) % 24
+        return h >= 23.5 or h < 5
+
+    def stoke(self):
+        self.fire_boost = 1.0
+        u = self.u
+        for _ in range(18):
+            self.particles.append(Particle(self.fire_x + self.rng.uniform(-5, 5) * u, self.ground - 6 * u,
+                                           self.rng.uniform(-25, 25) * u, -self.rng.uniform(40, 90) * u,
+                                           "spark", life=self.rng.uniform(.8, 2)))
+
+    # ------------------------------------------------------------ what is standing
+    def _mask(self):
+        self.monument_mask.flush()
+        return self.monument_mask.get_data(), self.monument_mask.get_stride()
+
+    def solid_span(self, y):
+        """Screen x of the outermost standing block pixels in row y, or None."""
+        r = int(y - self.oy)
+        if not 0 <= r < self.mon.h:
+            return None
+        data, stride = self._mask()
+        row = bytes(data[r * stride:r * stride + self.mon.w])
+        i1 = len(row.rstrip(b"\0"))
+        if not i1:
+            return None
+        return self.ox + len(row) - len(row.lstrip(b"\0")), self.ox + i1
+
+    def solid_top(self, x):
+        """Screen y of the highest standing block pixel in column x, or None."""
+        c = int(x - self.ox)
+        if not 0 <= c < self.mon.w:
+            return None
+        data, stride = self._mask()
+        col = bytes(data[c::stride][:self.mon.h])
+        n = len(col) - len(col.lstrip(b"\0"))
+        return None if n == len(col) else self.oy + n
+
+    def trace(self, x0, y0, x1, y1):
+        """First point on the segment that hits a standing block, or None."""
+        data, stride = self._mask()
+        m, u = self.mon, self.u
+        n = max(1, int(math.hypot(x1 - x0, y1 - y0) / (1.5 * u)))
+        for i in range(n + 1):
+            k = i / n
+            x, y = x0 + (x1 - x0) * k, y0 + (y1 - y0) * k
+            c, r = int(x - self.ox), int(y - self.oy)
+            if 0 <= c < m.w and 0 <= r < m.h and data[r * stride + c]:
+                return x, y
+        return None
+
     # ------------------------------------------------------------ disasters
     def begin_disaster(self, name=None):
         if name is None:
@@ -503,6 +605,9 @@ class World:
         self.mcr.fill()
         self.mcr.set_operator(cairo.OPERATOR_OVER)
         self.particles.append(Particle(self.ox + b.cx, self.oy + b.cy, vx, vy, "brick", abduct=abduct))
+
+    def spark(self, x, y, vx, vy, life):
+        self.particles.append(Particle(x, y, vx, vy, "spark", life=life))
 
     def smoke(self, x, y, vx, vy, life):
         self.particles.append(Particle(x, y, vx, vy, "smoke", life=life))
@@ -541,21 +646,22 @@ class World:
             self.wx_started = True
         for key, tau in (("cloud", 25), ("wind", 20), ("rain", 15), ("snow", 20), ("fog", 30)):
             e[key] += (target[key] - e[key]) * min(1.0, dt / tau)
-        for key, count, spread in (("rain", 420, 1.0), ("snow", 260, 1.0)):
-            pool = self.drops[key]
-            want = int(e[key] * count)
-            while len(pool) < want:  # new drops start above the screen, so a shower begins gently
-                pool.append([rng.uniform(-40, self.W + 40), rng.uniform(-self.H * spread, -5),
-                             rng.uniform(.8, 1.2), rng.uniform(0, 6)])
-            del pool[max(want, 0):]
-        for key, fall, push in (("rain", 820, 260), ("snow", 55, 60)):
-            for d in self.drops[key]:
-                d[1] += fall * u * d[2] * dt
-                sway = math.sin(self.t_anim * 1.3 + d[3]) * 14 * u if key == "snow" else 0
-                d[0] += (e["wind"] * push * u + sway) * dt
-                if d[1] > self.ground:
-                    d[1] -= self.ground + rng.uniform(0, 60) * u
-                    d[0] = rng.uniform(-40, self.W + 40)
+        if self.watched:  # rain and snow are only for looking at
+            for key, count, spread in (("rain", 420, 1.0), ("snow", 260, 1.0)):
+                pool = self.drops[key]
+                want = int(e[key] * count)
+                while len(pool) < want:  # new drops start above the screen, so a shower begins gently
+                    pool.append([rng.uniform(-40, self.W + 40), rng.uniform(-self.H * spread, -5),
+                                 rng.uniform(.8, 1.2), rng.uniform(0, 6)])
+                del pool[max(want, 0):]
+            for key, fall, push in (("rain", 820, 260), ("snow", 55, 60)):
+                for d in self.drops[key]:
+                    d[1] += fall * u * d[2] * dt
+                    sway = math.sin(self.t_anim * 1.3 + d[3]) * 14 * u if key == "snow" else 0
+                    d[0] += (e["wind"] * push * u + sway) * dt
+                    if d[1] > self.ground:
+                        d[1] -= self.ground + rng.uniform(0, 60) * u
+                        d[0] = rng.uniform(-40, self.W + 40)
         drift = (5 + 30 * abs(e["wind"])) * u * (1 if e["wind"] >= 0 else -1)
         span = self.W + 300 * u
         for c in self.clouds:
@@ -583,7 +689,11 @@ class World:
         self.night = self.is_night(t_now) if self.config.sky in ("clock", "loop") else self.config.sky == "night"
         target = 1.0 if self.night else 0.0
         self.fire_level += max(-dt / 4, min(dt / 3, target - self.fire_level))
-        if self.fire_level > .05 and self.rng.random() < dt * 10 * self.fire_level:
+        self.fire_boost = max(0.0, self.fire_boost - dt / 6)
+        if not self.night and (self.seats or self.guitarist):
+            self.seats = {w: x for w, x in self.seats.items() if x in self.rest_seats}
+            self.guitarist = self.stoker = None
+        if self.watched and self.fire_level > .05 and self.rng.random() < dt * 10 * self.fire_level:
             u = self.u
             self.particles.append(Particle(self.fire_x + self.rng.uniform(-4, 4) * u, self.ground - 8 * u,
                                            self.rng.uniform(-12, 12) * u, -self.rng.uniform(25, 55) * u,
@@ -651,7 +761,11 @@ class World:
         wdt = dt * (self.timelapse if self.phase in ("build", "admire") else 1.0)
         for w in list(self.workers):
             w.tick(wdt)
-        self.workers = [w for w in self.workers if not w.gone]
+        if any(w.gone for w in self.workers):
+            for w in self.workers:
+                if w.gone:
+                    self.release_seat(w)
+            self.workers = [w for w in self.workers if not w.gone]
         if self.crane:
             self.crane.update(wdt)
         for t in self.trucks:
@@ -945,6 +1059,9 @@ class World:
                              5 * u, 3.9 * u)
             cr.fill()
         self.scaffold.draw_racks(cr)
+        for sx in self.rest_seats:  # crates to sit on during a break
+            cr.rectangle(sx - 3, self.ground - SEAT_H, 6, SEAT_H)
+        cr.fill()
         # site container where the crew rests
         x, y = self.rest_x, self.ground
         cr.rectangle(x - 22 * u, y - 18 * u, 44 * u, 18 * u)
@@ -1035,10 +1152,14 @@ class World:
                 cr.stroke()
 
     def draw_campfire(self, cr):
-        k = self.fire_level
+        u, g = self.u, self.ground
+        for sx in self.camp_seats:  # logs round the fire pit
+            cr.rectangle(sx - 4.5, g - SEAT_H, 9, SEAT_H)
+        cr.fill()
+        k = self.fire_level * (1 + .45 * self.fire_boost)
         if k <= .01:
             return
-        u, x, g, t = self.u, self.fire_x, self.ground, self.t_anim
+        x, t = self.fire_x, self.t_anim
         glow = cairo.RadialGradient(x, g - 8 * u, 0, x, g - 8 * u, 85 * u * k)
         glow.add_color_stop_rgba(0, 1, .62, .25, .5 * k)
         glow.add_color_stop_rgba(1, 1, .45, .15, 0)

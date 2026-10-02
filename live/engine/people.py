@@ -11,6 +11,8 @@ from .site import INSTALL_TIME, draw_ladder
 
 WALK, CARRY_WALK, CLIMB, RUN = 20.0, 15.0, 10.0, 46.0
 THIGH, SHIN, TORSO, UPPER, FORE = 4.6, 4.4, 6.2, 3.4, 3.2
+SEAT_H = 3.2   # height of a log or crate to sit on
+SEATED = ("sit", "sit_talk", "sit_drink", "sit_clap", "guitar")
 
 
 def _seg(x, y, angle, length, f):
@@ -20,6 +22,13 @@ def _seg(x, y, angle, length, f):
 
 def draw_person(cr, x, y, f, pose, ph, carry=0, rot=0.0, lift=0.0, poles=0):
     """Silhouette worker with a hard hat; (x, y) are the feet, f the facing."""
+    if pose == "lie":  # asleep on the ground, head towards f, face up
+        cr.save()
+        cr.translate(x - f * 8, y - 1.7)
+        cr.rotate(f * math.pi / 2)
+        draw_person(cr, 0, 0, -f, "lying", ph)
+        cr.restore()
+        return
     s = math.sin(ph)
     c = math.cos(ph)
     lean = 0.05
@@ -46,10 +55,22 @@ def draw_person(cr, x, y, f, pose, ph, carry=0, rot=0.0, lift=0.0, poles=0):
         legs = [(.15, 0), (-.1, 0)]
         arms = [(2.0 + lift, 2.1 + lift), (1.9 + lift, 2.0 + lift)]
         lean = .25
-    elif pose == "sit":
+    elif pose in SEATED:
         legs = [(1.57, .2), (1.5, .3)]
-        arms = [(.5, 1.1), (.4, 1.0)]
         lean = -.05
+        if pose == "sit_talk":
+            g = .7 + .4 * math.sin(ph * .7)
+            arms = [(g, g + .9), (.5, 1.1)]
+        elif pose == "sit_drink":
+            arms = [(1.9, 4.0) if math.sin(ph * .45) > .55 else (.6, 1.7), (.4, 1.0)]
+        elif pose == "sit_clap":
+            a = .22 * abs(math.sin(ph * 2.2))
+            arms = [(1.0 + a, 2.1 + a), (1.0 - a, 2.1 - a)]
+        elif pose == "guitar":
+            arms = [(1.45, 1.81), (0.0, 1.7 + .25 * math.sin(ph * 4))]  # fretting hand, strumming hand
+            lean = .04
+        else:
+            arms = [(.5, 1.1), (.4, 1.0)]
     elif pose == "talk":
         g = .4 + .3 * math.sin(ph * .7)
         legs = [(.08, 0), (-.08, 0)]
@@ -59,19 +80,41 @@ def draw_person(cr, x, y, f, pose, ph, carry=0, rot=0.0, lift=0.0, poles=0):
         legs = [(.9 * kick, -.9 * kick), (-.15 * max(0, -s), 0)]
         arms = [(math.pi - .7 + .5 * s, math.pi - .2 + .4 * c), (math.pi - .7 - .5 * s, math.pi - .2 - .4 * c)]
         lean = .1 * c
+    elif pose == "dance2":  # hips sway, both arms up waving
+        legs = [(.22 * s, -.1 * max(0, s)), (-.22 * s, -.1 * max(0, -s))]
+        arms = [(math.pi - 1.0 + .4 * s, math.pi - .6 + .5 * s), (-(math.pi - 1.0) + .4 * s, -(math.pi - .6) + .5 * s)]
+        lean = .1 * s
+    elif pose == "clap":
+        a = .22 * abs(math.sin(ph * 2.2))
+        legs = [(.08, 0), (-.08, 0)]
+        arms = [(1.0 + a, 2.1 + a), (1.0 - a, 2.1 - a)]
+    elif pose == "warm":  # hands held out to the fire
+        legs = [(.1, 0), (-.06, 0)]
+        arms = [(1.05, 1.35), (.95, 1.25)]
+        lean = .1
+    elif pose == "stretch":
+        legs = [(.04, 0), (-.04, 0)]
+        arms = [(math.pi - .12, math.pi - .1), (math.pi - .3, math.pi - .25)]
+        lean = -.1
+    elif pose == "drink":
+        legs = [(.06, 0), (-.06, 0)]
+        arms = [(1.9, 4.0), (.1, .2)]
     elif pose == "cheer":
         legs = [(.15, 0), (-.15, 0)]
         arms = [(math.pi - .5 + .2 * s, math.pi - .3), (math.pi - .5 - .2 * s, math.pi - .3)]
     elif pose == "tumble":
         legs = [(.9 + s, .4), (-.6 - s, -.2)]
         arms = [(2.2 + c, 2.6), (-2.0 - c, -2.4)]
+    elif pose == "lying":
+        legs = [(.03, 0), (-.03, 0)]
+        arms = [(.1, .15), (-.05, .05)]
     else:  # stand
         legs = [(.06, 0), (-.06, 0)]
         arms = [(.12, .2), (-.05, .05)]
 
-    # place the hip so the lowest foot touches y
+    # place the hip so the lowest foot touches y (or, seated, on a seat SEAT_H high)
     drops = [math.cos(t) * THIGH + math.cos(k) * SHIN for t, k in legs]
-    hip_y = y - max(drops) if pose != "sit" else y - 3.2
+    hip_y = y - max(drops) if pose not in SEATED else y - SEAT_H
     hip_x = x
 
     cr.save()
@@ -115,6 +158,25 @@ def draw_person(cr, x, y, f, pose, ph, carry=0, rot=0.0, lift=0.0, poles=0):
     cr.fill()
     cr.rectangle(hx - 2.2 + .9 * f, hy - .9, 4.4, .9)
     cr.fill()
+    if pose == "guitar":
+        gx, gy = hip_x + 3.2 * f, hip_y - 2.6
+        cr.save()
+        cr.translate(gx, gy)
+        cr.scale(3.0, 2.4)
+        cr.arc(0, 0, 1, 0, math.tau)
+        cr.restore()
+        cr.fill()
+        cr.set_line_width(.9)
+        cr.move_to(gx, gy)
+        cr.line_to(hip_x + 9.6 * f, hip_y - 9.1)
+        cr.stroke()
+        cr.set_line_width(1.5)
+        cr.move_to(hip_x + 9.4 * f, hip_y - 8.9)
+        cr.line_to(hip_x + 10.4 * f, hip_y - 10.0)
+        cr.stroke()
+    if pose in ("drink", "sit_drink"):  # a mug in the drinking hand
+        cr.rectangle(hands[0][0] - .7, hands[0][1] - 1.2, 1.4, 1.6)
+        cr.fill()
     if carry and pose in ("carry", "climb", "bend"):
         bx = (hands[0][0] + hands[1][0]) / 2
         by = (hands[0][1] + hands[1][1]) / 2
@@ -150,6 +212,7 @@ class Worker:
         self.poles = 0         # ladder sections being carried
         self.leaving = False   # walking off because the crew got smaller
         self.gone = False
+        self.dancer = rng.choice((0, 1, 2))  # 0: rather clap; 1, 2: two dance styles
         self.gen = self.job_idle()
 
     def reset(self, x):
@@ -209,9 +272,10 @@ class Worker:
             self.ph += step * 0.9
             yield
 
-    def pause(self, secs, pose="stand"):
+    def pause(self, secs, pose="stand", until=None):
+        """Hold a pose for secs, or until `until()` says to stop."""
         t = 0.0
-        while t < secs:
+        while t < secs and not (until and until()):
             self.pose = pose
             self.ph += self.dt * 3
             t += self.dt
@@ -344,28 +408,28 @@ class Worker:
             if cr and cr.present and w.phase == "build" and not ((w.night or w.storm()) and w.night_shift()):
                 yield from self.pause(rng.uniform(3, 6), "stand")  # wait up here for the next load
             yield from self.go(self.x, 0, 0 if self.x < w.center else 1)
-        r = rng.random()
         if w.storm() and w.night_shift():  # thunderstorm: wait it out by the container
-            yield from self.walk_to(w.rest_x + rng.uniform(-26, 26))
-            self.f = rng.choice((-1, 1))
-            yield from self.pause(rng.uniform(5, 12), "talk" if r < .5 else "stand")
-            yield
+            yield from self.job_shelter()
             return
-        if w.night and w.fire_level > .3:  # evening by the campfire: sit, chat, dance
-            side = rng.choice((-1, 1))
-            yield from self.walk_to(w.fire_x + side * rng.uniform(13, 48))
-            self.f = 1 if w.fire_x > self.x else -1
-            pose = "sit" if r < .45 else "talk" if r < .75 else "dance"
-            yield from self.pause(rng.uniform(8, 25), pose)
-            yield
+        if w.campfire_on():  # evening: a seat by the fire for the whole night
+            yield from self.job_evening()
             return
+        r = rng.random()
         if w.phase == "admire" and r < .3:
             self.f = 1 if w.center > self.x else -1
             yield from self.pause(rng.uniform(2, 4), "cheer")
         elif r < .35:
-            yield from self.walk_to(w.rest_x + rng.uniform(-24, 24))
-            self.f = rng.choice((-1, 1))
-            yield from self.pause(rng.uniform(15, 60), "sit")
+            seat = w.claim_seat(self, w.rest_seats)
+            if seat is not None:  # a break on a crate by the container
+                try:
+                    yield from self.walk_to(seat)
+                    self.f = rng.choice((-1, 1))
+                    yield from self.pause(rng.uniform(15, 60), rng.choice(("sit", "sit", "sit_drink", "sit_talk")))
+                finally:
+                    w.release_seat(self)
+            else:
+                yield from self.walk_to(w.rest_x + rng.uniform(-30, 30) * w.u)
+                yield from self.pause(rng.uniform(8, 20), "drink")
         elif r < .6:
             yield from self.walk_to(rng.uniform(w.site[0] - 70, w.site[1] + 70))
             yield from self.pause(rng.uniform(3, 9))
@@ -380,6 +444,147 @@ class Worker:
             self.f = 1 if w.center > self.x else -1
             yield from self.pause(rng.uniform(4, 10))
         yield
+
+    def job_shelter(self):
+        """Stand by the container until the storm passes (no pacing about)."""
+        w, rng = self.w, self.rng
+        yield from self.walk_to(w.rest_x + rng.uniform(-26, 26) * w.u)
+        self.f = rng.choice((-1, 1))
+        over = lambda: not (w.storm() and w.night_shift())
+        while not over():
+            yield from self.pause(rng.uniform(10, 30), rng.choice(("stand", "talk", "drink")), until=over)
+        yield
+
+    # ---- evenings by the campfire ----
+    def face_fire(self):
+        self.f = 1 if self.w.fire_x > self.x else -1
+
+    def job_evening(self):
+        """Take a seat by the fire once, then spend the night around it: talk, drink,
+        play the guitar, dance to it, stoke the fire, doze off. Nobody wanders in
+        circles: each worker keeps their own spot until dawn."""
+        w, rng = self.w, self.rng
+        seat = w.claim_seat(self, w.camp_seats)
+        home = seat if seat is not None else w.camp_standing_spot(self)
+        over = lambda: not w.campfire_on()
+        try:
+            yield from self.walk_to(home)
+            self.face_fire()
+            while not over():
+                yield from self.evening_turn(home, seat is not None, over)
+                if self.x != home and not over():
+                    yield from self.walk_to(home)
+                    self.face_fire()
+        finally:
+            w.release_seat(self)
+            if w.guitarist is self:
+                w.guitarist = None
+            if w.stoker is self:
+                w.stoker = None
+        yield
+
+    def evening_turn(self, home, seated, over):
+        w, rng = self.w, self.rng
+        music = w.guitarist is not None and w.guitarist is not self
+        sit = (lambda p: p) if seated else (lambda p: {"sit": "stand", "sit_talk": "talk", "sit_drink": "drink",
+                                                         "sit_clap": "clap"}.get(p, "stand"))
+        if w.late_night() and rng.random() < .12:
+            yield from self.evening_sleep(home, over)
+            return
+        options = [("rest", 3), ("talk", 3), ("drink", 1.5), ("warm", 1.2), ("stretch", .6), ("visit", 1)]
+        if seated and w.guitarist is None:
+            options.append(("guitar", 2.5))
+        if music:
+            options += [("dance", 4 if self.dancer else 1.2), ("clap", 3)]
+        if w.stoker is None and w.fire_level > .5:
+            options.append(("stoke", .7))
+        total = sum(k for _, k in options)
+        r = rng.uniform(0, total)
+        for act, k in options:
+            r -= k
+            if r <= 0:
+                break
+        self.face_fire()
+        if act == "rest":
+            yield from self.pause(rng.uniform(20, 80), sit("sit"), until=over)
+        elif act == "talk":
+            yield from self.pause(rng.uniform(15, 50), sit("sit_talk"), until=over)
+        elif act == "drink":
+            yield from self.pause(rng.uniform(10, 25), sit("sit_drink"), until=over)
+        elif act == "clap":
+            yield from self.pause(rng.uniform(10, 30), sit("sit_clap"), until=lambda: over() or w.guitarist is None)
+        elif act == "guitar":
+            w.guitarist = self
+            try:
+                yield from self.pause(rng.uniform(70, 220), "guitar", until=over)
+            finally:
+                if w.guitarist is self:
+                    w.guitarist = None
+            yield from self.pause(rng.uniform(10, 30), "sit_drink", until=over)
+        elif act == "dance":  # get up in front of the seat and dance while the music lasts
+            spot = home + (6 if w.fire_x > home else -6) * w.u
+            yield from self.walk_to(spot)
+            self.face_fire()
+            style = "dance2" if self.dancer == 2 else "dance"
+            stop = lambda: over() or w.guitarist is None
+            t_end = rng.uniform(15, 45)
+            while t_end > 0 and not stop():
+                d = rng.uniform(2.5, 6)
+                if rng.random() < .3:  # a little shuffle to one side and back
+                    yield from self.walk_to(spot + rng.uniform(-4, 4) * w.u, speed=WALK * .4)
+                    self.f = rng.choice((-1, 1))
+                yield from self.pause(d, style, until=stop)
+                t_end -= d
+        elif act == "warm":
+            spot = home + (5 if w.fire_x > home else -5) * w.u
+            yield from self.walk_to(spot)
+            self.face_fire()
+            yield from self.pause(rng.uniform(10, 25), "warm", until=over)
+        elif act == "stretch":
+            yield from self.pause(rng.uniform(2, 3.5), "stretch", until=over)
+        elif act == "stoke":  # throw another log on
+            w.stoker = self
+            try:
+                side = 1 if self.x > w.fire_x else -1
+                yield from self.walk_to(w.fire_x + side * 10 * w.u)
+                self.face_fire()
+                yield from self.pause(1.4, "bend", until=over)
+                w.stoke()
+                yield from self.pause(rng.uniform(3, 8), "warm", until=over)
+            finally:
+                if w.stoker is self:
+                    w.stoker = None
+        elif act == "visit":  # stroll over to someone else's seat for a chat
+            others = [o for o in w.workers if o is not self and w.seat_of(o) is not None and not o.busy]
+            if not others:
+                return
+            o = rng.choice(others)
+            side = 1 if o.x < w.fire_x else -1
+            yield from self.walk_to(o.x + side * 6 * w.u)
+            self.f = 1 if o.x > self.x else -1
+            yield from self.pause(rng.uniform(12, 35), "talk", until=over)
+
+    def evening_sleep(self, home, over):
+        """Late at night: doze off by the fire, or turn in at the container."""
+        w, rng = self.w, self.rng
+        if rng.random() < .5:  # lie down just behind the seat, head away from the fire
+            away = -1 if w.fire_x > home else 1
+            yield from self.walk_to(home + away * 13 * w.u)
+            self.f = away
+            yield from self.pause(rng.uniform(240, 900), "lie", until=over)
+            yield from self.pause(rng.uniform(2, 3), "stretch")
+            return
+        yield from self.walk_to(w.rest_x)  # the seat stays theirs while they sleep
+        self.hidden = True  # inside the container
+        try:
+            t = rng.uniform(600, 2400)
+            while t > 0 and not over():
+                t -= self.dt
+                self.pose = "stand"
+                yield
+        finally:
+            self.hidden = False
+        yield from self.pause(rng.uniform(2, 3), "stretch")
 
     def job_panic(self, away):
         self.held = None

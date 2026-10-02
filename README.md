@@ -19,8 +19,15 @@ the world on your desktop, block by block. Then a monster flattens it. Then they
   place, and nobody ever stands on thin air.
 - When the monument stands, the scaffold comes down. At the end of the cycle a **disaster**
   strikes, the survivors run for it, walk back, clear the rubble and start the next wonder.
-- **After dark** the crew downs tools and gathers round a campfire to talk and dance until
-  dawn. Thunderstorms send them to shelter by the site container.
+- **After dark** the crew downs tools and takes a seat round the campfire for the night.
+  Someone plays the guitar while others dance or clap along, talk, drink, throw another log
+  on, and late at night doze off by the fire or turn in at the container. Thunderstorms send
+  them to shelter by the site container.
+- **The giant ape holds on to what's really there.** It climbs real walls, hauls itself onto
+  low roofs, scrambles up pyramids, and drops when the blocks it holds are smashed. Breath,
+  fire and heat-rays stop at the first stone they hit and burn their way in.
+- **Covered monitors keep going.** They aren't drawn, but the build and the crew carry on in
+  the background, so nothing jumps when you look again.
 
 You choose how long a cycle lasts, from one minute (forty workers in time-lapse) to one week
 (a handful of people laying a block every few minutes). Progress follows the wall clock and is

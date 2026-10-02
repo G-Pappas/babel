@@ -35,6 +35,7 @@ from engine.world import World  # noqa: E402
 FPS = 15
 ART_H = 720
 SKY_REFRESH = 30.0
+HIDDEN_STEP = 0.2  # simulation step for a covered monitor (5 updates a second, no drawing)
 LIVE_STATUS = Path.home() / ".local/state/babel-live/live.json"
 SCRIPT = str(Path(__file__).resolve())
 
@@ -129,7 +130,7 @@ def run_gtk(args):
             self.world = world
             self.connector = connector
             self.visible = True
-            self.hidden_at = 0.0
+            self.backlog = 0.0  # simulated time owed while covered
             self.bg_size = (max(1, dev_w // 2), max(1, dev_h // 2))
             self.bg = self.fg = None
             self.sky_t = -1e9
@@ -227,16 +228,13 @@ def run_gtk(args):
     hypr = Hyprland() if not args.window else None
 
     def refresh_visibility():
-        """Covered monitors stop drawing; uncovered ones catch up before they're seen."""
+        """Covered monitors stop drawing but keep simulating, so the build and the crew
+        carry on behind your windows and are where they should be when you look again."""
         clear = hypr.clear_monitors() if hypr else {}
-        now = time.monotonic()
         for sc in scenes:
             visible = clear.get(sc.connector, True)
             if visible and not sc.visible:
-                sc.world.resume(now - sc.hidden_at)
                 sc.sky_t = -1e9
-            elif not visible and sc.visible:
-                sc.hidden_at = now
             sc.visible = visible
             sc.world.watched = visible
         return True
@@ -252,11 +250,20 @@ def run_gtk(args):
 
     def tick():
         now = time.monotonic()
-        dt = min(0.25, now - last[0])
+        gap = now - last[0]
         last[0] = now
+        if gap > 20:  # the machine was asleep: jump the scene to where it should be
+            for sc in scenes:
+                sc.world.resume(gap)
+        dt = min(0.25, gap)
         for sc in scenes:
-            if sc.visible:  # nobody can see a covered monitor: don't draw it at all
+            if sc.visible:
                 sc.frame(dt, now)
+            else:  # nobody can see a covered monitor: simulate it at a lower rate, draw nothing
+                sc.backlog += dt
+                if sc.backlog >= HIDDEN_STEP:
+                    sc.world.update(min(0.25, sc.backlog))
+                    sc.backlog = 0.0
         if not args.window:
             write_status(now)
         return True

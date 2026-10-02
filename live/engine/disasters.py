@@ -144,6 +144,9 @@ class Kaiju(Disaster):
             mx, my = self.mouth()
             ex = (w.mx0 - 80 * u) if self.dir < 0 else (w.mx1 + 80 * u)
             ey = w.mtop + 8 * u + (w.ground - w.mtop) * .55 * k
+            ex, ey, hit = clip_beam(w, mx, my, ex, ey, 7 * u)
+            if hit:
+                scorch(w, ex, ey, u)
             self.beam = (mx, my, ex, ey)
             self.shake = 2 * u
             if self.st > 3.0:
@@ -239,6 +242,24 @@ def blast_affect(blasts, x, y, rng, u):
     return None
 
 
+def clip_beam(w, x0, y0, x1, y1, bite):
+    """A beam stops where it meets the first standing block, burning `bite` into it
+    (so it eats its way through instead of passing through walls)."""
+    hit = w.trace(x0, y0, x1, y1)
+    if not hit:
+        return x1, y1, False
+    dx, dy = x1 - x0, y1 - y0
+    ln = math.hypot(dx, dy) or 1
+    return hit[0] + dx / ln * bite, hit[1] + dy / ln * bite, True
+
+
+def scorch(w, x, y, u):
+    """Sparks and smoke where a beam is burning into the stone."""
+    if w.rng.random() < .5:
+        w.smoke(x, y, w.rng.uniform(-15, 15) * u, -w.rng.uniform(15, 35) * u, w.rng.uniform(1.2, 2.5))
+    w.spark(x, y, w.rng.uniform(-60, 60) * u, -w.rng.uniform(20, 90) * u, w.rng.uniform(.3, .8))
+
+
 def age_blasts(blasts, dt):
     for b in blasts:
         b[3] -= dt
@@ -297,7 +318,10 @@ class Dragon(Disaster):
             ty = w.mtop + 10 * u + (w.ground - 40 * u - w.mtop) * k
             dx, dy = tx - mx, ty - my
             ln = math.hypot(dx, dy) or 1
-            self.fire = (mx, my, dx / ln, dy / ln, ln + 70 * u)
+            ex, ey, hit = clip_beam(w, mx, my, mx + dx / ln * (ln + 70 * u), my + dy / ln * (ln + 70 * u), 8 * u)
+            if hit:
+                scorch(w, ex, ey, u)
+            self.fire = (mx, my, dx / ln, dy / ln, math.hypot(ex - mx, ey - my))
             self.shake = 1.5 * u
             if self.st > 1 and w.rng.random() < .4:
                 w.smoke(tx, ty, w.rng.uniform(-20, 20) * u, -25 * u, w.rng.uniform(1.5, 3))
@@ -585,10 +609,13 @@ class Tripods(Disaster):
                 px, py = self.projector(m)
                 tx = self.cx + m["d"] * (w.mx1 - w.mx0) * (.25 - .5 * k)
                 ty = w.mtop + 6 * u + (w.ground - 30 * u - w.mtop) * (.5 - .5 * math.cos(k * math.pi * 2))
-                m["ray"] = (px, py, tx, ty)
+                ln = math.hypot(tx - px, ty - py) or 1
+                ex, ey = tx + (tx - px) / ln * 120 * u, ty + (ty - py) / ln * 120 * u  # on until it hits
+                ex, ey, hit = clip_beam(w, px, py, ex, ey, 6 * u)
+                if hit:
+                    scorch(w, ex, ey, u)
+                m["ray"] = (px, py, ex, ey)
                 self.shake = 1.2 * u
-                if w.rng.random() < .35:
-                    w.smoke(tx, ty, w.rng.uniform(-15, 15) * u, -25 * u, w.rng.uniform(1.5, 3))
                 if m["st"] > 3.6:
                     m["state"] = "march"
             else:
@@ -675,13 +702,19 @@ class Tripods(Disaster):
 # ---------------------------------------------------------------- giant ape
 
 class GiantApe(Disaster):
-    """A giant ape knuckle-walks in, climbs the monument, beats its chest at the
-    top, smashes it four times on the way down, jumps off and leaves."""
+    """A giant ape knuckle-walks in and climbs the monument. On a low building it
+    hauls itself up onto the roof, beats its chest and pounds its way down through
+    it; on a tall one it clings near the top, beats its chest with its free fist
+    and punches chunks out of the wall as it climbs down. Hands and feet always
+    rest on blocks that are still standing: knock them away and it drops."""
+
+    GRAVITY = 600
 
     def __init__(self, w):
         super().__init__(w)
         u, rng = self.u, w.rng
         self.h = max(120 * u, min(190 * u, (w.ground - w.mtop) * .42))
+        self.mount = w.ground - w.mtop < 1.35 * self.h   # low enough to stand on top of
         self.f = rng.choice((-1, 1))              # faces the monument
         self.x = -90 * u if self.f > 0 else w.W + 90 * u
         self.y = w.ground
@@ -690,98 +723,283 @@ class GiantApe(Disaster):
         self.ph = 0.0
         self.blasts = []
         self.strikes = 0
-        self.vy = 0.0
+        self.vx = self.vy = 0.0
+        self.skel = None
+        self.pose_walk()
 
-    def wall_x(self, y):
-        """The monument's outer face on the ape's side at height y."""
-        w = self.w
-        ext = w.row_ext(y)
-        if not ext:
+    # ---- what it can hold on to and stand on ----
+    def face(self, y):
+        """The monument's outer face on the ape's side at height y (only what still stands)."""
+        span = self.w.solid_span(y)
+        if not span:
             return None
-        return w.ox + (ext[0] if self.f > 0 else ext[1])
+        return span[0] if self.f > 0 else span[1]
 
+    def grab(self, y):
+        """Where a hand reaching for height y can hold on: the wall there, or the top
+        edge just below if it reaches over the top. None: nothing within reach."""
+        for k in range(14):
+            yy = y + k * .04 * self.h
+            if yy >= self.w.ground:
+                break
+            e = self.face(yy)
+            if e is not None and abs(e - (self.x + self.f * .24 * self.h)) < .3 * self.h:
+                return e, yy
+        return None
+
+    def support(self, x):
+        """Height a foot at x comes to rest on: standing blocks, rubble or the ground."""
+        w = self.w
+        best = w.ground - w.hm[min(w.W, max(0, int(x)))]
+        for dx in (-.03, 0, .03):
+            top = w.solid_top(x + dx * self.h)
+            if top is not None:
+                best = min(best, top)
+        return best
+
+    def feet_x(self):
+        return self.x + self.f * .1 * self.h, self.x - self.f * .05 * self.h
+
+    def stand_y(self):
+        return min(self.support(fx) for fx in self.feet_x())
+
+    # ---- update ----
     def update(self, dt):
         super().update(dt)
         w, u, h = self.w, self.u, self.h
         self.st += dt
         self.shake = 0
         self.blasts = age_blasts(self.blasts, dt)
-        if self.state == "walk":
+        st = self.state
+        if st == "walk":
             self.ph += dt * 7
             self.x += self.f * 115 * u * dt
-            wall = self.wall_x(w.ground - 4 * u)
-            if wall is not None and (self.x + self.f * .3 * h - wall) * self.f >= 0:
-                self.state, self.st = "climb", 0.0
-        elif self.state == "climb":
+            wall = self.face(w.ground - 4 * u)
+            if wall is None and (self.x - self.origin_x) * self.f > 0:
+                self.state = "leave"  # nothing left to climb
+            elif wall is not None and (self.x + self.f * .3 * h - wall) * self.f >= 0:
+                # a sheer wall gets climbed; a slope or terraces get scrambled up on foot
+                mid = self.face(w.ground - .5 * h)
+                if mid is None or (mid - wall) * self.f > .3 * h:
+                    self.state, self.st, self.mount = "scramble", 0.0, True
+                else:
+                    self.state, self.st = "climb", 0.0
+            self.pose_walk()
+        elif st == "scramble":  # up the slope, hands on the stones ahead
             self.ph += dt * 6
-            self.y -= 95 * u * dt
-            wall = self.wall_x(self.y - .5 * h)
-            if wall is not None:
-                self.x += (wall - self.f * .24 * h - self.x) * min(1.0, dt * 6)
-            if self.y - .55 * h <= w.mtop or wall is None or self.st > 6:
+            # the summit: nothing higher than where it stands anywhere close ahead
+            ahead = min(self.support(self.x + self.f * k * .1 * h) for k in range(3, 13))
+            if ahead > self.y - .02 * h or self.st > 14:
                 self.state, self.st = "beat", 0.0
-        elif self.state == "beat":
+            else:
+                self.x += self.f * 50 * u * dt
+                target = self.stand_y()
+                self.y = target if target > self.y else max(target, self.y - 120 * u * dt)
+            self.pose_stand(crouch=.6)
+        elif st == "climb":
+            self.ph += dt * 6
+            self.y = max(w.mtop, self.y - 90 * u * dt)
+            chest = self.grab(self.y - .55 * h)
+            if chest:
+                self.x += (chest[0] - self.f * .24 * h - self.x) * min(1.0, dt * 8)
+            low = self.face(self.y - .3 * h)
+            roof = w.solid_top(self.x + self.f * .32 * h)  # top of the wall just ahead
+            no_grip = self.grab(self.y - .98 * h) is None and self.grab(self.y - .86 * h) is None
+            over = roof is not None and roof >= self.y - .6 * h
+            if over and (self.mount or no_grip or roof - w.mtop < .6 * h):
+                self.mount = True
+            if self.mount:
+                # over the edge: the top of the wall is below its chest, or the wall
+                # at hip height is gone or steps back into a roof
+                at_feet = self.face(self.y - .05 * h)
+                if over or low is None or (at_feet is not None and (low - at_feet) * self.f > .2 * h) or self.st > 9:
+                    self.state, self.st = "mantle", 0.0
+                    self.from_xy = (self.x, self.y)
+                    roof = max(w.mx0 + .15 * h, min(w.mx1 - .15 * h, self.x + self.f * .32 * h))
+                    self.x = roof
+                    self.to_xy = (roof, self.stand_y())
+                    self.x = self.from_xy[0]
+            elif self.grab(self.y - 1.05 * h) is None or self.y - 1.0 * h <= w.mtop or self.st > 9:
+                self.state, self.st = "beat", 0.0
+            if self.state == "climb" and not self.pose_climb():
+                self.fall()
+        elif st == "mantle":  # haul itself up over the edge onto the roof
+            k = min(1.0, self.st / 1.1)
+            e = k * k * (3 - 2 * k)
+            (x0, y0), (x1, y1) = self.from_xy, self.to_xy
+            self.x = x0 + (x1 - x0) * e
+            self.y = y0 + (y1 - y0) * e - math.sin(k * math.pi) * .12 * h
+            self.pose_stand(crouch=1 - k)
+            if k >= 1:
+                self.state, self.st = "beat", 0.0
+        elif st == "beat":
             self.ph += dt * 14
             self.shake = 2 * u
-            if self.st > 2.0:
+            if self.mount:
+                self.settle(dt)
+                self.pose_stand()
+            elif not self.pose_climb(beat=True):
+                self.fall()
+            if self.st > 2.2 and self.state == "beat":
                 self.state, self.st = "smash", 0.0
-        elif self.state == "smash":
+        elif st == "smash":
             k = self.st % .9
-            if k >= .45 and self.st // .9 == self.strikes:
+            hit = k >= .45 and self.st // .9 == self.strikes
+            if self.mount:
+                self.settle(dt)
+                if hit:  # both fists down on the roof in front of it
+                    fx = self.x + self.f * .32 * h
+                    fy = self.support(fx)
+                    self.impact(fx, fy + .04 * h, .32 * h)
+                    self.impact(fx + self.f * .22 * h, fy + .14 * h, .26 * h)
+                self.pose_stand(fists=k)
+                if hit:
+                    self.x += self.f * .06 * h  # step forward into the damage
+            else:
+                if hit:  # the free fist punches into the wall beside it
+                    py = self.y - .5 * h
+                    wall = self.face(py)
+                    if wall is not None:
+                        self.impact(wall + self.f * .04 * h, py, .3 * h)
+                        self.impact(wall + self.f * .3 * h, py + .1 * h, .24 * h)
+                if k > .5:  # then climbs down a little, hand over hand
+                    self.y = min(w.ground, self.y + .55 * h * dt / .4)
+                    self.ph += dt * 6
+                    chest = self.grab(self.y - .55 * h)
+                    if chest:
+                        self.x += (chest[0] - self.f * .24 * h - self.x) * min(1.0, dt * 8)
+                if not self.pose_climb(punch=k):
+                    self.fall()
+            if hit:
                 self.strikes += 1
-                # each blow lands lower, tearing a bite out of the building below it
-                fx, fy = self.x + self.f * .42 * h, self.y - .45 * h + (self.strikes - 1) * .5 * h
-                self.blasts.append([fx, fy, .5 * h, .15])
-                self.blasts.append([fx + self.f * .35 * h, fy, .4 * h, .15])
                 self.shake = 7 * u
-                for _ in range(8):
-                    w.smoke(fx, fy, w.rng.uniform(-40, 40) * u, -w.rng.uniform(10, 50) * u, 2)
-            if self.strikes >= 4 and k > .7:
-                self.state, self.st, self.vy = "jump", 0.0, -120 * u
-        elif self.state == "jump":
-            self.vy += 600 * u * dt
-            self.y = min(w.ground, self.y + self.vy * dt)
-            self.x -= self.f * 60 * u * dt
-            if self.y >= w.ground:
+            if self.strikes >= 4 and k > .75 and self.state == "smash":
+                self.state, self.st = "jump", 0.0
+                self.vx, self.vy = -self.f * (90 if self.mount else 40) * u, (-170 if self.mount else 0) * u
+        elif st in ("jump", "fall"):
+            self.vy += self.GRAVITY * u * dt
+            self.x += self.vx * dt
+            self.y += self.vy * dt
+            target = self.stand_y()
+            if self.vy > 0 and self.y >= target:
+                self.y = target
                 self.shake = 5 * u
-                self.f = -self.f
-                self.state, self.st = "leave", 0.0
-        else:
+                if st == "jump" or target >= w.ground - 2 * u:
+                    self.f = -self.f
+                    self.state, self.st = "leave", 0.0
+                else:  # landed on what is left of the roof: carry on smashing from there
+                    self.mount = True
+                    self.state, self.st = "smash", self.strikes * .9
+            self.pose_stand(air=True)
+        else:  # leave
             self.ph += dt * 8
             self.x += self.f * 140 * u * dt
+            self.y = w.ground
+            self.pose_walk()
             if self.x < -200 * u or self.x > w.W + 200 * u:
                 self.done = True
+
+    def fall(self):
+        """Lost its grip (the blocks it held went): drop."""
+        self.state, self.st = "fall", 0.0
+        self.vx, self.vy = -self.f * 20 * self.u, 0.0
+
+    def settle(self, dt):
+        """Standing on the roof: drop into any hole knocked out under its feet."""
+        target = self.stand_y()
+        if self.y < target - 1:
+            self.vy += self.GRAVITY * self.u * dt
+            self.y = min(target, self.y + self.vy * dt)
+        else:
+            self.y, self.vy = target, 0.0
+
+    def impact(self, x, y, r):
+        self.blasts.append([x, y, r, .15])
+        for _ in range(6):
+            self.w.smoke(x, y, self.w.rng.uniform(-40, 40) * self.u, -self.w.rng.uniform(10, 50) * self.u, 2)
+
+    # ---- skeleton: hip, shoulder, head, hands, feet ----
+    def upright(self):
+        x, y, f, h = self.x, self.y, self.f, self.h
+        return (x, y - .38 * h), (x + f * .05 * h, y - .74 * h), (x + f * .11 * h, y - .87 * h)
+
+    def pose_walk(self):
+        x, y, f, h, ph = self.x, self.y, self.f, self.h, self.ph
+        self.skel = ((x - f * .1 * h, y - .4 * h), (x + f * .16 * h, y - .62 * h), (x + f * .3 * h, y - .66 * h),
+                     [(x + f * (.3 + .08 * math.sin(ph)) * h, y), (x + f * (.3 - .08 * math.sin(ph)) * h, y)],
+                     [(x - f * (.12 + .06 * math.sin(ph)) * h, y), (x - f * (.12 - .06 * math.sin(ph)) * h, y)])
+
+    def pose_climb(self, beat=False, punch=None):
+        """Hands and feet on the wall. False if there's nothing left to hold."""
+        h, f, y, ph = self.h, self.f, self.y, self.ph
+        hip, shoulder, head = self.upright()
+        a = math.sin(ph)
+        hands = [self.grab(y - (.98 + .08 * a) * h), self.grab(y - (.86 - .08 * a) * h)]
+        if beat or punch is not None:
+            hands[1] = self.grab(y - 1.0 * h)
+        if hands[0] is None and hands[1] is None:
+            return False
+        hands = [hd or hands[1 - i] for i, hd in enumerate(hands)]
+        if beat:  # one hand holds on, the other beats its chest
+            hands[0] = (shoulder[0] + f * .1 * h, shoulder[1] + (.08 + .04 * a) * h)
+        elif punch is not None:
+            if punch < .45:  # wind up
+                hands[0] = (shoulder[0] - f * .06 * h, shoulder[1] - .12 * h * punch / .45)
+            elif punch < .6:
+                wall = self.face(y - .5 * h)
+                hands[0] = (wall if wall is not None else shoulder[0] + f * .3 * h, y - .5 * h)
+            else:
+                hands[0] = self.grab(y - .9 * h) or hands[1]
+        feet = []
+        for k, fy in enumerate((y - (.06 + .05 * a) * h, y - (.02 - .05 * a) * h)):
+            if fy >= self.w.ground - 2:
+                feet.append((self.x + f * (.1 - .05 * k) * h, self.w.ground))
+                continue
+            for j in range(6):  # brace against the wall here, or a little lower down
+                yy = fy + j * .04 * h
+                e = self.face(yy)
+                if e is not None and abs(e - (self.x + f * .2 * h)) < .3 * h:
+                    feet.append((e, yy))
+                    break
+            else:  # nothing in reach under this foot: it hangs
+                feet.append((self.x + f * (.12 - .05 * k) * h, y + .02 * h))
+        self.skel = (hip, shoulder, head, hands, feet)
+        return True
+
+    def pose_stand(self, fists=None, crouch=0.0, air=False):
+        x, y, f, h = self.x, self.y, self.f, self.h
+        hip, shoulder, head = self.upright()
+        if crouch:
+            dy = crouch * .2 * h
+            hip, shoulder, head = (hip[0], hip[1] + dy * .5), (shoulder[0] + f * .1 * h * crouch, shoulder[1] + dy), \
+                (head[0] + f * .12 * h * crouch, head[1] + dy)
+        feet = []
+        for fx in self.feet_x():
+            sy = y if air else self.support(fx)
+            feet.append((fx, y if sy - y > .15 * h else sy))  # a foot over a hole just hangs
+        a = math.sin(self.ph)
+        if air:
+            hands = [(x - f * .2 * h, y - 1.05 * h), (x + f * .25 * h, y - 1.0 * h)]
+        elif crouch:  # pulling itself up: hands flat on the roof ahead
+            hands = [(x + f * .3 * h, self.support(x + f * .3 * h)), (x + f * .22 * h, self.support(x + f * .22 * h))]
+        elif fists is None:  # beating its chest
+            hands = [(x + f * .18 * h, y - (.64 + .05 * a) * h), (x + f * .13 * h, y - (.6 - .05 * a) * h)]
+        elif fists < .45:  # fists raised
+            lift = fists / .45
+            hands = [(x + f * (.05 + .1 * lift) * h, y - (.8 + .4 * lift) * h)] * 2
+        else:  # fists down on the roof
+            fx = x + f * .32 * h
+            fy = min(self.support(fx), y + .1 * h)
+            hands = [(fx, fy), (fx - f * .05 * h, fy)]
+        self.skel = (hip, shoulder, head, hands, feet)
 
     def affect(self, x, y):
         return blast_affect(self.blasts, x, y, self.w.rng, self.u)
 
     def draw_front(self, cr):
-        u, h, x, y, f, ph = self.u, self.h, self.x, self.y, self.f, self.ph
+        h, f = self.h, self.f
+        hip, shoulder, head, hands, feet = self.skel
         cr.set_source_rgb(*self.w.sil)
-        st = self.state
-        if st in ("walk", "leave"):
-            hip, shoulder, head = (x - f * .1 * h, y - .4 * h), (x + f * .16 * h, y - .62 * h), (x + f * .3 * h, y - .66 * h)
-            hands = [(x + f * (.3 + .08 * math.sin(ph)) * h, y), (x + f * (.3 - .08 * math.sin(ph)) * h, y)]
-            feet = [(x - f * (.12 + .06 * math.sin(ph)) * h, y), (x - f * (.12 - .06 * math.sin(ph)) * h, y)]
-        else:
-            hip, shoulder, head = (x, y - .38 * h), (x + f * .05 * h, y - .74 * h), (x + f * .11 * h, y - .87 * h)
-            feet = [(x + f * .1 * h, y - .02 * h), (x - f * .04 * h, y)]
-            if st == "climb":
-                a = math.sin(ph)
-                hands = [(x + f * .2 * h, y - (1.0 + .1 * a) * h), (x + f * .22 * h, y - (.85 - .1 * a) * h)]
-                feet = [(x + f * .16 * h, y - (.06 + .06 * a) * h), (x + f * .12 * h, y + .04 * a * h)]
-            elif st == "beat":
-                a = math.sin(ph)
-                hands = [(x + f * .18 * h, y - (.64 + .05 * a) * h), (x + f * .13 * h, y - (.6 - .05 * a) * h)]
-            elif st == "smash":
-                k = self.st % .9
-                if k < .45:
-                    lift = k / .45
-                    hands = [(x + f * (.05 + .1 * lift) * h, y - (.8 + .4 * lift) * h)] * 2
-                else:
-                    hands = [(x + f * .42 * h, y - .45 * h), (x + f * .38 * h, y - .5 * h)]
-            else:  # jump
-                hands = [(x - f * .2 * h, y - 1.05 * h), (x + f * .25 * h, y - 1.0 * h)]
         for fx, fy in feet:  # legs
             kx, ky = (hip[0] + fx) / 2 + f * .06 * h, (hip[1] + fy) / 2
             tapered(cr, [hip, (kx, ky), (fx, fy)], .15 * h, .1 * h)

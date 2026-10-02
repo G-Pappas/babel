@@ -83,6 +83,15 @@ Panel {
     onTriggered: root.refresh()
   }
 
+  // keep the tooltip's "current wonder" line fresh without opening the popup
+  Timer {
+    interval: 30000
+    repeat: true
+    running: root.themeActive && !root.opened
+    triggeredOnStart: true
+    onTriggered: root.refresh()
+  }
+
   BarIconButton {
     id: button
     anchors.fill: parent
@@ -90,6 +99,7 @@ Panel {
     text: root.icon
     slotSize: Style.bar.statusSlot
     tooltipText: "Babel — " + root.statusLine
+    onTooltipHoveredChanged: if (tooltipHovered) root.refresh()
     onPressed: function(code) { if (code === Qt.LeftButton) root.toggle() }
   }
 

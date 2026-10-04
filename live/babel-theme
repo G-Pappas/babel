@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """babel-theme: set up and configure the Babel live theme for Omarchy.
 
-  babel-theme setup                 install the start/stop hooks and the Style > Babel menu
+  babel-theme setup                 install the start/stop hooks, the bar icon and the Style > Babel menu
+  babel-theme install               setup, then switch to the Babel theme (the bar icon's "Turn on Babel")
   babel-theme uninstall             remove them again (and stop the live wallpaper)
   babel-theme status [--json]       show the current settings
   babel-theme cycle 1d              loop length: 1m, 10m, 1h, 6h, 1d, 1w, ...
@@ -35,11 +36,15 @@ sys.path.insert(0, str(HERE))
 from engine.config import (CONFIG_PATH, DISASTERS, SKY_MODES, WEATHER_MODES, WONDERS, Config,  # noqa: E402
                            parse_duration)
 
-THEME_LINK = Path.home() / ".config/omarchy/themes/babel/live"
+REPO = HERE.parent                                   # this checkout: theme files and plugin at its root
+THEME_DIR = Path.home() / ".config/omarchy/themes/babel"
+THEME_LINK = THEME_DIR / "live"
 HOOKS = Path.home() / ".config/omarchy/hooks"
 MENU = Path.home() / ".config/omarchy/extensions/omarchy-menu.jsonc"
 BIN = Path.home() / ".local/bin/babel-theme"
-PLUGIN = Path.home() / ".config/omarchy/plugins/babel.live"
+PLUGIN_ID = "gpappas.babel"
+PLUGIN = Path.home() / ".config/omarchy/plugins" / PLUGIN_ID
+OLD_PLUGIN = Path.home() / ".config/omarchy/plugins/babel.live"  # before it moved to the repo root
 ENGINE = HERE / "babel-live.py"
 BEGIN = "  // babel-live:begin (added by `babel-theme setup`, removed by `babel-theme uninstall`)"
 END = "  // babel-live:end"
@@ -161,7 +166,17 @@ def run_hook(theme):
 
 # ------------------------------------------------------------------ commands
 
+def omarchy(*args):
+    if shutil.which("omarchy"):
+        subprocess.run(["omarchy", *args], check=False, capture_output=True)
+
+
 def cmd_setup():
+    # Installed from the plugin marketplace, the checkout lives in the plugins folder:
+    # make it the Babel theme as well (Omarchy accepts a theme folder that is a link)
+    if not THEME_DIR.exists() and not THEME_DIR.is_symlink():
+        THEME_DIR.parent.mkdir(parents=True, exist_ok=True)
+        THEME_DIR.symlink_to(REPO)
     for event in ("theme-set", "post-boot"):
         d = HOOKS / f"{event}.d"
         d.mkdir(parents=True, exist_ok=True)
@@ -172,14 +187,18 @@ def cmd_setup():
     Config().save()  # normalise the settings file so the menu can read it
     install_menu()
     # the top-bar widget (it hides itself whenever another theme is active)
-    if PLUGIN.is_symlink() or not PLUGIN.exists():
+    if OLD_PLUGIN.is_symlink():
+        omarchy("plugin", "disable", "babel.live")
+        OLD_PLUGIN.unlink()
+    if not PLUGIN.exists() or PLUGIN.is_symlink():  # a marketplace install is a real folder: keep it
         if PLUGIN.is_symlink():
             PLUGIN.unlink()
-        PLUGIN.symlink_to(THEME_LINK / "plugin")
-        if shutil.which("omarchy"):
+        PLUGIN.parent.mkdir(parents=True, exist_ok=True)
+        PLUGIN.symlink_to(THEME_DIR)
+        if shutil.which("omarchy-shell"):
             subprocess.run(["omarchy-shell", "shell", "rescanPlugins"], check=False, capture_output=True)
             time.sleep(1)
-            subprocess.run(["omarchy", "plugin", "enable", "babel.live"], check=False, capture_output=True)
+    omarchy("plugin", "enable", PLUGIN_ID)
     if BIN.parent.is_dir():
         if BIN.is_symlink() or BIN.exists():
             BIN.unlink()
@@ -196,10 +215,10 @@ def cmd_uninstall():
         if link.is_symlink() or link.exists():
             link.unlink()
     remove_menu()
-    if PLUGIN.is_symlink():
-        if shutil.which("omarchy"):
-            subprocess.run(["omarchy", "plugin", "disable", "babel.live"], check=False, capture_output=True)
-        PLUGIN.unlink()
+    for link, pid in ((PLUGIN, PLUGIN_ID), (OLD_PLUGIN, "babel.live")):
+        if link.is_symlink():  # a marketplace install stays: remove it with `omarchy plugin remove`
+            omarchy("plugin", "disable", pid)
+            link.unlink()
     if BIN.is_symlink():
         BIN.unlink()
     notify("Removed the hooks and the menu. Settings stay in " + str(CONFIG_PATH))
@@ -222,6 +241,7 @@ def cmd_status(cfg, as_json=False):
             live = {}
         print(json.dumps({
             "active": current_theme() == "babel", "running": bool(engine_pids()),
+            "setUp": (HOOKS / "theme-set.d" / "babel-live").is_symlink(),
             "cycle": cfg.cycle_text, "sky": cfg.sky, "skyLoop": cfg.sky_loop_text,
             "background": cfg.background, "workers": cfg.workers, "weather": cfg.weather,
             "weatherNow": weather_now(),
@@ -261,6 +281,11 @@ def main(argv):
     cmd, rest = argv[0], argv[1:]
     if cmd == "setup":
         return cmd_setup()
+    if cmd == "install":
+        cmd_setup()
+        if current_theme() != "babel" and shutil.which("omarchy"):
+            subprocess.run(["omarchy", "theme", "set", "babel"], check=False)
+        return 0
     if cmd == "uninstall":
         return cmd_uninstall()
     cfg = Config()

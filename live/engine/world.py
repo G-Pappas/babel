@@ -10,6 +10,7 @@ import itertools
 import math
 import random
 import time
+import zlib
 
 import cairo
 
@@ -53,7 +54,9 @@ class World:
         self.cycle_override = cycle
         self.persist = persist
         self.clock = clock
-        seed = seed if seed is not None else hash(key) & 0xffff
+        # a stable seed (Python's hash() changes every run), so the order of the
+        # wonders is the same after a restart
+        seed = seed if seed is not None else zlib.crc32(key.encode()) & 0xffff
         self.rng = random.Random(seed ^ int(time.time()))
         self.landscape = Landscape(W, H, self.ground, seed)
         self.sil = palette(20)["sil"]
@@ -115,6 +118,8 @@ class World:
         length = self.cycle_len()
         if state and not cycle:
             start, index = state["start"], state["index"]
+            if state.get("monument") in MONUMENTS and not first_monument:
+                self.first_monument = state["monument"]  # carry on with the same wonder
             if now >= start + length:  # the cycle ended while we were off: show the finale soon
                 start = now - length + 20
         else:
@@ -176,11 +181,11 @@ class World:
     def begin_cycle(self, start, index):
         self.cycle_start, self.index = start, index
         self.build_schedule()
-        if self.persist and not self.cycle_override:
-            save_state(self.key, {"start": start, "index": index})
         enabled = [n for n in self.order if n in self.config.wonders] or self.order
         name = self.first_monument or enabled[index % len(enabled)]
         self.first_monument = None
+        if self.persist and not self.cycle_override:
+            save_state(self.key, {"start": start, "index": index, "monument": name})
         for block in BLOCK_SCALES:
             self.mon = Monument(name, self.rng, scale=self.u, block=block)
             self.layout_site()
@@ -473,7 +478,7 @@ class World:
             frac = (now - self.cycle_start) / old_len
             self.cycle_start = now - frac * self.cycle_len()
             if self.persist:
-                save_state(self.key, {"start": self.cycle_start, "index": self.index})
+                save_state(self.key, {"start": self.cycle_start, "index": self.index, "monument": self.mon.name})
         self.build_schedule()
         self.crew, self.base_timelapse = self.plan_crew()
         self.timelapse = self.base_timelapse

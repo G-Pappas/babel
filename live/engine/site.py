@@ -108,9 +108,15 @@ class Scaffold:
                 cr.move_to(x - 2.2 * u, r)
                 cr.line_to(x + 2.2 * u, r)
                 r -= 3.5 * u
-            if k >= 1:  # walkway from past the ladders to the wall at this level
+            if k >= 1:  # walkway from past the ladders to the wall at this level...
                 y = w.level_y(lv)
                 lo, hi = w.walkway(side, lv)
+                wall_end = hi if side == 0 else lo
+                # ...once there's stone under its far end to rest on; until then
+                # just a landing at the top of the ladder
+                if not w.solid_near(wall_end + (2 if side == 0 else -2) * u, y + 3 * u, 3 * u):
+                    lad = w.ladder_x(side, lv)
+                    lo, hi = (lo, min(hi, lad + 8 * u)) if side == 0 else (max(lo, lad - 8 * u), hi)
                 cr.move_to(lo, y)
                 cr.line_to(hi, y)
         cr.stroke()

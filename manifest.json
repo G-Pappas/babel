@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "id": "babel.live",
+  "id": "gpappas.babel",
   "name": "Babel",
   "version": "1.0.0",
-  "author": "babel",
-  "description": "Settings for the Babel live theme: loop length, sky, background, wonders and disasters",
+  "author": "gpappas",
+  "description": "A live wallpaper theme: a tiny crew builds the wonders of the world, then a monster flattens them",
   "kinds": [
     "bar-widget"
   ],

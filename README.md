@@ -32,6 +32,8 @@ the world on your desktop, block by block. Then a monster flattens it. Then they
 - **Covered monitors keep going.** They aren't drawn, but the build and the crew carry on in
   the background, so nothing jumps when you look again.
 
+![Umbrellas in the rain, and workers gliding off the Empire State Building as a UFO beams it up](docs/umbrellas.png)
+
 You choose how long a cycle lasts, from one minute (forty workers in time-lapse) to one week
 (a handful of people laying a block every few minutes). Progress follows the wall clock and is
 saved, so a week-long build carries on after a reboot.
@@ -63,6 +65,8 @@ The Lighthouse's fire and the torches of the Colossus and the Statue of Liberty 
 | **UFO** | Hovers overhead and beams the building (and any slow workers) up |
 | **Space battle** | A ringed fortress-planet sends fighters on strafing runs, then fires its main beam |
 
+![The giant ape clinging to the Parthenon's pediment, and standing on a Stonehenge lintel](docs/ape.png)
+
 All of them are original drawings, inspired by myth, H. G. Wells' *The War of the Worlds*
 (public domain) and classic monster-movie tropes.
 
@@ -71,7 +75,7 @@ empty, a couple of seconds after you switch to it, so you don't miss it while yo
 
 ## A living sky
 
-![The crew round the campfire at night](docs/night.png)
+![The crew round the campfire at night: seated on logs, dancing to the guitar](docs/night.png)
 
 - **The real sun and moon.** They rise and set at the real times for your location, follow
   their real paths across the sky, and the moon shows its real phase. Sky colours follow the
@@ -88,22 +92,40 @@ its own (a whole day every 2 minutes to 6 hours), or pin dawn, day, sunset or ni
 
 ## Install
 
+Two ways in, same result. Everything Babel needs (Python 3.11+, PyGObject, pycairo,
+gtk4-layer-shell) is already on a stock Omarchy install.
+
+### From the plugin marketplace (easiest)
+
 ```bash
-omarchy theme install https://github.com/G-Pappas/babel
-~/.config/omarchy/themes/babel/live/babel-theme setup
-omarchy theme set babel
+omarchy plugin add https://github.com/G-Pappas/babel --enable
 ```
 
-`setup` is needed once because Omarchy (rightly) never runs code from a theme on its own. It:
+A Babel icon (a little building) appears on the top bar. **Click it and press _Turn on Babel_.**
+That's all: it sets Babel up and switches your theme to it.
 
-- adds the hooks that start the live wallpaper when you switch to Babel, and stop it when you
-  switch away (and start it again after a reboot);
+### As a theme
+
+```bash
+omarchy theme install https://github.com/G-Pappas/babel
+~/.config/omarchy/themes/babel/live/babel-theme install
+```
+
+The second command matters: Omarchy (rightly) never runs code from a theme on its own, so
+without it you'd only get Babel's colours and a still picture, not the live wallpaper.
+
+### What "Turn on Babel" (or `babel-theme install`) does
+
+- adds the hooks that start the live wallpaper whenever Babel is your theme, stop it when you
+  switch to another theme, and start it again after a reboot;
 - adds the **Babel icon to the top bar** (it hides itself under other themes);
 - adds a **Style > Babel** submenu to the Omarchy menu;
-- links the `babel-theme` command into `~/.local/bin`.
+- links the `babel-theme` command into `~/.local/bin`;
+- switches your theme to Babel.
 
-`babel-theme uninstall` takes all of that out again. Everything Babel needs (Python 3.11+,
-PyGObject, pycairo, gtk4-layer-shell) is already on a stock Omarchy install.
+To leave, just pick another theme (Style > Theme); come back the same way. To remove Babel
+completely, run `babel-theme uninstall`, then `omarchy plugin remove gpappas.babel` or
+`omarchy theme remove babel` (whichever way you installed it).
 
 ## Settings
 
@@ -143,8 +165,11 @@ with no restart.
   cycles the monument is cut into bigger blocks. On cycles of two hours or more the schedule
   only counts daylight hours, so the build still finishes on time despite the nights off.
 - **Hidden monitors cost next to nothing.** A monitor whose workspace has windows on it isn't
-  drawn at all. When you uncover it, the scene catches up instantly to where the build should be.
-  With one monitor showing the scene, Babel uses about 5% of one CPU core.
+  drawn at all, but its scene keeps going in the background at a few updates a second, so the
+  build and the crew are exactly where they should be when you look again. With one monitor
+  showing the scene, Babel uses about 5% of one CPU core.
+- **The crew never hurries.** Their pace is planned once per cycle and never changes; if they
+  fall behind, an extra worker walks in to help.
 - **One scene per monitor**, each building its own wonder.
 
 ### Privacy
@@ -167,7 +192,7 @@ live/babel-live.py --snapshot out.png --monument parthenon --weather storm --hou
 |---|---|
 | `live/babel-live.py` | The app: one layer-shell window per monitor, the frame loop, Hyprland visibility |
 | `live/babel-theme` | Setup, uninstall and settings command |
-| `live/plugin/` | The top-bar widget (an Omarchy shell plugin, `babel.live`) |
+| `manifest.json`, `Widget.qml` | The top-bar widget (an Omarchy shell plugin, `gpappas.babel`) |
 | `live/engine/world.py` | One monitor's scene: the cycle, crew planning, physics rules, drawing |
 | `live/engine/people.py` | The workers: how they're drawn and their jobs |
 | `live/engine/site.py` | Scaffold, delivery trucks and the tower crane |

@@ -5,22 +5,23 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// Bar icon for the Babel live theme. Shown only while Babel is the active
-// theme; the popup changes the same settings as `babel-theme` and the
-// Style > Babel menu, by running that command.
+// Bar icon for the Babel live theme. Shown while Babel is the active theme
+// (and, right after installing from the plugin marketplace, until it has been
+// turned on). The popup changes the same settings as `babel-theme` and the
+// Style > Babel menu, by running that command from this checkout.
 Panel {
   id: root
-  moduleName: "babel.live"
-  ipcTarget: "babel.live"
+  moduleName: "gpappas.babel"
+  ipcTarget: "gpappas.babel"
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
   readonly property color dim: Qt.darker(foreground, 1.55)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property string icon: ""
-  readonly property string cli: Quickshell.env("HOME") + "/.config/omarchy/themes/babel/live/babel-theme"
+  readonly property string cli: decodeURIComponent(Qt.resolvedUrl("live/babel-theme").toString().replace(/^file:\/\//, ""))
 
   property bool themeActive: false
-  property var st: ({ cycle: "", sky: "", skyLoop: "", background: "live", weather: "live", weatherNow: "",
+  property var st: ({ setUp: true, cycle: "", sky: "", skyLoop: "", background: "live", weather: "live", weatherNow: "",
                       wonders: [], disasters: [], monitors: [] })
 
   readonly property string statusLine: {
@@ -47,8 +48,11 @@ Panel {
     if (!statusProc.running) statusProc.running = true
   }
 
-  visible: themeActive
-  implicitWidth: themeActive ? button.implicitWidth : 0
+  // fresh from the marketplace, Babel isn't set up yet: show the icon so it can be turned on
+  readonly property bool shown: themeActive || !root.st.setUp
+  visible: shown
+  implicitWidth: shown ? button.implicitWidth : 0
+  Component.onCompleted: refresh()
   implicitHeight: button.implicitHeight
   onOpenedChanged: if (opened) { refresh(); Qt.callLater(function() { keys.forceActiveFocus() }) }
 
@@ -158,6 +162,24 @@ Panel {
             meta: root.statusLine
             foreground: root.foreground
             fontFamily: root.fontFamily
+          }
+
+          Column {
+            visible: !root.themeActive
+            width: parent.width
+            spacing: Style.space(8)
+            Text {
+              width: parent.width
+              wrapMode: Text.Wrap
+              text: "Babel is a live wallpaper theme. Turning it on adds the bar icon and a Style > Babel menu, starts the wallpaper whenever Babel is your theme, and switches to it now."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+            Chip {
+              text: "Turn on Babel"
+              onClicked: { root.close(); root.run(["install"]) }
+            }
           }
 
           PanelSeparator { foreground: root.foreground }

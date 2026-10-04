@@ -75,15 +75,19 @@ class Scaffold:
             self.built[side] = self.reserved[side] = lv
             self.undelivered[side] = self.w.levels - lv
 
-    def knock(self, side, lv):
-        """Section lv falls, taking everything above it on that side with it."""
+    def knock(self, side, lv, abduct=False):
+        """Section lv falls, taking everything above it on that side with it (or, in
+        a tractor beam, just that section is carried off)."""
         w = self.w
-        for k in range(lv, w.levels + 1):
+        for k in range(lv, (lv + 1) if abduct else (w.levels + 1)):
             if self.progress[side][k] > 0:
                 self.progress[side][k] = 0.0
                 x, y = w.ladder_x(side, k), w.level_y(k) + w.lift / 2
                 for _ in range(2):
-                    w.add_particle(x, y, w.rng.uniform(-60, 60) * w.u, -w.rng.uniform(20, 120) * w.u, "pole")
+                    if abduct:
+                        w.add_particle(x, y, 0, 0, "pole", abduct=True)
+                    else:
+                        w.add_particle(x, y, w.rng.uniform(-60, 60) * w.u, -w.rng.uniform(20, 120) * w.u, "pole")
         self.set(side, 1, self.progress[side][1])
 
     def sections(self):
@@ -389,17 +393,26 @@ class Crane:
         x0, x1 = self.x, self.jib_end()
         return any(affect(x0 + (x1 - x0) * k / 6, y) for k in range(7))
 
-    def collapse(self):
+    def collapse(self, in_beam=None):
+        """The crane comes apart. in_beam(x, y): a tractor beam is taking it, so the
+        pieces inside it are carried up and the rest simply drop."""
         w, u = self.w, self.w.u
         if not self.present:
             return
+
+        def piece(x, y, vx, vy):
+            if in_beam and in_beam(x, y):
+                w.add_particle(x, y, 0, 0, "pole", abduct=True)
+            elif in_beam:
+                w.add_particle(x, y, w.rng.uniform(-15, 15) * u, 0, "pole")
+            else:
+                w.add_particle(x, y, vx, vy, "pole")
         for i in range(int(self.sections) + 1):
             for _ in range(2):
-                w.add_particle(self.x, w.ground - (i + .5) * w.lift, w.rng.uniform(-90, 90) * u,
-                               -w.rng.uniform(20, 120) * u, "pole")
+                piece(self.x, w.ground - (i + .5) * w.lift, w.rng.uniform(-90, 90) * u, -w.rng.uniform(20, 120) * u)
         y, x0, x1 = self.mast_top(), self.x, self.jib_end()
         for k in range(8):
-            w.add_particle(x0 + (x1 - x0) * k / 7, y, w.rng.uniform(-80, 80) * u, -w.rng.uniform(0, 80) * u, "pole")
+            piece(x0 + (x1 - x0) * k / 7, y, w.rng.uniform(-80, 80) * u, -w.rng.uniform(0, 80) * u)
         for lv, n in self.landings.items():
             for _ in range(min(n, 6)):
                 w.add_particle(self.landing_x(lv), w.level_y(lv) - 4 * u, w.rng.uniform(-60, 60) * u, -40 * u, "brick")

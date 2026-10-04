@@ -33,12 +33,13 @@ CRANE_MIN_LEVELS = 19         # monuments at least this tall (~300 px) get a tow
 
 
 class Particle:
-    __slots__ = ("x", "y", "vx", "vy", "kind", "life", "bounced", "abduct", "dead")
+    __slots__ = ("x", "y", "vx", "vy", "kind", "life", "bounced", "abduct", "dead", "spin")
 
     def __init__(self, x, y, vx, vy, kind, life=0.0, abduct=False):
         self.x, self.y, self.vx, self.vy = x, y, vx, vy
         self.kind, self.life, self.abduct = kind, life, abduct
         self.bounced = self.dead = False
+        self.spin = random.uniform(-1, 1)  # how it tumbles while it's carried off
 
 
 class World:
@@ -469,8 +470,8 @@ class World:
         self.pile_left[side] -= k
         return True
 
-    def add_particle(self, x, y, vx, vy, kind):
-        self.particles.append(Particle(x, y, vx, vy, kind))
+    def add_particle(self, x, y, vx, vy, kind, abduct=False):
+        self.particles.append(Particle(x, y, vx, vy, kind, abduct=abduct))
 
     def on_config_change(self, old_len):
         if self.phase in ("build", "admire") and not self.cycle_override:
@@ -925,11 +926,13 @@ class World:
                 vx, vy = (0, 0) if r == ABDUCT else r
                 self.particles.append(Particle(w.x, w.y - 9 * self.u, vx, vy, "body", abduct=r == ABDUCT))
         if self.crane and self.crane.hit(d.affect):
-            self.crane.collapse()
+            self.crane.collapse(getattr(d, "in_beam", None))
         sc = self.scaffold
         for side, lv in list(sc.sections()):
-            if sc.progress[side][lv] > 0 and d.affect(self.ladders[side][lv], self.level_y(lv) + self.lift / 2):
-                sc.knock(side, lv)
+            if sc.progress[side][lv] > 0:
+                r = d.affect(self.ladders[side][lv], self.level_y(lv) + self.lift / 2)
+                if r:
+                    sc.knock(side, lv, abduct=r == ABDUCT)
         self.collapse_t += dt
         if self.collapse_t > .3:
             self.collapse_t = 0
@@ -1268,7 +1271,16 @@ class World:
                     cr.rectangle(hx - bw / 2, hy - bh / 2, bw, bh)
                     cr.fill()
         for p in self.particles:
-            if p.kind == "brick":
+            if p.kind == "brick" and p.abduct and d:  # a whole block, tumbling and shrinking away
+                k = d.carry_scale(p) if hasattr(d, "carry_scale") else 1.0
+                bw, bh = self.mon.bw * u * k, self.mon.bh * u * k
+                cr.save()
+                cr.translate(p.x, p.y)
+                cr.rotate(p.life * 3 * p.spin)
+                cr.rectangle(-bw / 2, -bh / 2, bw, bh)
+                cr.restore()
+                cr.fill()
+            elif p.kind == "brick":
                 cr.rectangle(p.x - 2.5 * u, p.y - 2 * u, 5 * u, 4 * u)
                 cr.fill()
             elif p.kind == "pole":

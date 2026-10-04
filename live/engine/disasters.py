@@ -1058,16 +1058,35 @@ class UFO(Disaster):
         return 10 * self.u + (y - self.uy) * .24
 
     def affect(self, x, y):
-        if self.beam_on and y > self.uy and abs(x - self.ux) <= self.halfw(y):
+        """The beam peels the building from the top down: only stone near the
+        surface comes loose, a few blocks at a time, the grip deepening as it goes."""
+        if not self.in_beam(x, y):
+            return None
+        w, u = self.w, self.u
+        top = w.solid_top(x)
+        age = self.t - 3.8
+        if top is not None and y - top > (6 + 45 * age) * u:
+            return None  # still buried under stone the beam hasn't pulled off yet
+        if w.rng.random() < .07 + .05 * age:  # checked every frame: blocks lift one by one
             return ABDUCT
         return None
 
+    def in_beam(self, x, y):
+        return self.beam_on and y > self.uy and abs(x - self.ux) <= self.halfw(y)
+
+    def carry_scale(self, p):
+        """Things shrink as they near the saucer, then vanish into it."""
+        return max(.2, min(1.0, (p.y - self.uy) / (110 * self.u)))
+
     def force(self, p, dt):
         if p.abduct:
-            p.vx = (self.ux - p.x) * 1.2
-            p.vy = -(95 + p.life * 8) * self.u
-            p.life += dt
-            if p.y <= self.uy + 8 * self.u:
+            u = self.u
+            rise = min(1.0, p.life / 1.6)  # a slow lift-off, then faster and faster
+            p.vy = -(12 + 150 * rise * rise) * u
+            # swirl round the middle of the beam, drawn in tighter as it rises
+            target = self.ux + math.sin(p.life * 2.6 + p.spin * 6) * self.halfw(p.y) * .45
+            p.vx = (target - p.x) * 1.6
+            if p.y <= self.uy + 6 * u:
                 p.dead = True
 
     def draw_back(self, cr):

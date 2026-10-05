@@ -153,6 +153,8 @@ babel-theme toggle disaster kraken
 babel-theme background pick
 babel-theme reset
 babel-theme disaster-now
+babel-theme monitors span                 # or: separate
+babel-theme wonder-monitor HDMI-A-1       # or: auto
 ```
 
 Everything is stored in `~/.config/babel-live/config.toml` and applies within a few seconds,
@@ -170,7 +172,12 @@ with no restart.
   showing the scene, Babel uses about 5% of one CPU core.
 - **The crew never hurries.** Their pace is planned once per cycle and never changes; if they
   fall behind, an extra worker walks in to help.
-- **One scene per monitor**, each building its own wonder.
+- **Several monitors make one wide scene.** The wonder goes up whole on one monitor (the
+  biggest, or the one you pick) and the monitor beside it is the crew's yard: their container
+  and campfire, and the stockyard where pallets and ladder sections wait and the truck loads
+  up before driving across to the site. The crew walks over for breaks and for the evening
+  fire, and monsters come in from the outer edge of the screen, never out of thin air in the
+  yard. `babel-theme monitors separate` gives every monitor a wonder of its own instead.
 
 ### Privacy
 
@@ -186,14 +193,15 @@ widget does. Set **Weather** to **off** and Babel makes no network requests at a
 live/babel-live.py --window --cycle 10m          # run in a normal window
 live/babel-live.py --snapshot out.png --monument eiffel --disaster kaiju --at 9 --hour 19
 live/babel-live.py --snapshot out.png --monument parthenon --weather storm --hour 21
+live/babel-live.py --snapshot out.png --monument eiffel --span left   # two monitors wide
 ```
 
 | File | What's in it |
 |---|---|
-| `live/babel-live.py` | The app: one layer-shell window per monitor, the frame loop, Hyprland visibility |
+| `live/babel-live.py` | The app: one layer-shell window per monitor showing its slice of a scene, the frame loop, Hyprland visibility |
 | `live/babel-theme` | Setup, uninstall and settings command |
 | `manifest.json`, `Widget.qml` | The top-bar widget (an Omarchy shell plugin, `gpappas.babel`) |
-| `live/engine/world.py` | One monitor's scene: the cycle, crew planning, physics rules, drawing |
+| `live/engine/world.py` | One scene (a monitor, or several side by side): the cycle, crew planning, physics rules, drawing |
 | `live/engine/people.py` | The workers: how they're drawn and their jobs |
 | `live/engine/site.py` | Scaffold, delivery trucks and the tower crane |
 | `live/engine/monuments.py` | The 21 wonders, drawn as outlines and cut into blocks |

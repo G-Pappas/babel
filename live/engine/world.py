@@ -1,4 +1,8 @@
-"""One monitor's scene: the build cycle, the crew, scaffolding, debris and drawing.
+"""One scene: the build cycle, the crew, scaffolding, debris and drawing.
+
+A scene covers one monitor, or several side by side. Then the wonder goes up on
+one of them (the stage) and the crew's yard is next door: their container and
+campfire, and the stockyard the trucks load at.
 
 The cycle runs on the wall clock. Its start time is saved, so a week-long build
 picks up where it was after a reboot. The monument rises during the first 90%
@@ -44,8 +48,10 @@ class Particle:
 
 class World:
     def __init__(self, W, H, config, key="window", seed=None, cycle=None, persist=True,
-                 first_monument=None, clock=time.time, weather=None):
+                 first_monument=None, clock=time.time, weather=None, stage=None):
         self.W, self.H = W, H
+        self.x0, self.x1 = stage or (0, W)  # where the wonder goes up: one monitor's width
+        self.wide = max(1.0, W / (H * 16 / 9))  # how many screens wide, for rain, clouds...
         self.u = u = H / 720
         self.ground = H - int(58 * u)
         self.gravity = 450 * u
@@ -90,7 +96,7 @@ class World:
         self.pal = palette(12)
         self.loc = astro.location()
         self.clouds = []  # [x, y, speed factor, (width, bumps), shade]; more show as cover grows
-        for i in range(16):
+        for i in range(round(16 * self.wide)):
             cw = self.rng.uniform(50, 140) * u
             n = self.rng.randint(3, 5)
             bumps = [(-cw / 2 + cw * (k + .5) / n + self.rng.uniform(-4, 4) * u,
@@ -100,11 +106,11 @@ class World:
         self.bolt = None             # lightning: (points, time left)
         self.next_bolt = 5.0
         self.snow_cover = 0.0
-        self.watched = True       # set by the app from Hyprland: nothing covers this monitor
+        self.watched = True       # set by the app from Hyprland: some of the scene is in view
+        self.stage_watched = True  # ...and the wonder's own monitor is, for the finale
         self.watched_for = 0.0
         self.t_anim = 0.0
-        self.rest_x = W * (.07 if self.rng.random() < .5 else .93)  # the crew's container stays put
-        self.fire_x = self.rest_x + (55 if self.rest_x < W / 2 else -55) * self.u  # their campfire
+        self.layout_yard()
         self.camp_seats, self.rest_seats = self.make_seats()
         self.seats = {}           # worker -> seat x it has claimed
         self.guitarist = None     # whoever is playing tonight
@@ -112,7 +118,10 @@ class World:
         self.fire_boost = 0.0     # flare-up after a new log
         self.make_scenery()
         self.trucks = []
-        self.workers = [Worker(self, self.rng.uniform(W * .3, W * .7), self.rng) for _ in range(config.workers)]
+        self.parked = Truck(self, self.yard_side, 0, 0, parked=True) if self.depot_x is not None else None
+        sw = self.x1 - self.x0
+        self.workers = [Worker(self, self.rng.uniform(self.x0 + sw * .3, self.x0 + sw * .7), self.rng)
+                        for _ in range(config.workers)]
 
         state = load_state(key) if persist else None
         now = clock()
@@ -279,9 +288,11 @@ class World:
 
     def layout_site(self):
         m, u, W = self.mon, self.u, self.W
+        x0, x1 = self.x0, self.x1
+        sw, mid = x1 - x0, (x0 + x1) / 2
         margin = m.w / 2 + 70 * u
-        cx = W / 2 + self.rng.uniform(-.06, .06) * W
-        cx = max(margin, min(W - margin, cx)) if W > 2 * margin else W / 2
+        cx = mid + self.rng.uniform(-.06, .06) * sw
+        cx = max(x0 + margin, min(x1 - margin, cx)) if sw > 2 * margin else mid
         self.ox, self.oy = int(cx - m.w / 2), self.ground - m.h
         self.mx0, self.mx1, self.mtop = self.ox, self.ox + m.w, self.oy
         self.center = cx
@@ -289,6 +300,42 @@ class World:
         self.site = (self.ox + base[0], self.ox + base[1])
         self.piles = [max(14 * u, self.site[0] - 32 * u), min(W - 14 * u, self.site[1] + 32 * u)]
         self.racks = [max(10 * u, self.piles[0] - 24 * u), min(W - 10 * u, self.piles[1] + 24 * u)]
+
+    def layout_yard(self):
+        """Where the crew's container and campfire go. On one monitor: by the edge.
+        Spanning monitors: on the one beside the wonder, with the stockyard past it,
+        where the trucks for that side load up and park."""
+        u, W = self.u, self.W
+        room = [self.x0, W - self.x1]  # width left and right of the stage
+        self.yard_side = None
+        self.depot_x = None
+        if max(room) > 300 * u:
+            d = 1 if room[1] >= room[0] else -1  # from the stage into the yard
+            near, L = (self.x1, room[1]) if d > 0 else (self.x0, room[0])
+            self.yard_side = 0 if d < 0 else 1
+            self.rest_x = near + d * L * .36
+            self.fire_x = self.rest_x - d * 55 * u  # the fire on the stage's side of the container
+            self.depot_x = near + d * L * .7
+            self.into_yard = d
+            return
+        self.rest_x = W * (.07 if self.rng.random() < .5 else .93)  # the crew's container stays put
+        self.fire_x = self.rest_x + (55 if self.rest_x < W / 2 else -55) * self.u  # their campfire
+
+    def inward(self):
+        """Which way a monster faces as it comes in: from a real screen edge, never
+        out of thin air in the middle of the yard (it may leave through the yard)."""
+        if self.yard_side is None:
+            return self.rng.choice((-1, 1))
+        return -1 if self.yard_side == 0 else 1
+
+    def depot_stock(self):
+        """Blocks (as a share of the job) and ladder sections still waiting at the stockyard."""
+        s = self.yard_side
+        return self.undelivered[s] / max(1, self.side_total[s]), self.scaffold.undelivered[s]
+
+    def depot_bay(self, length):
+        """Front bumper of a truck parked at the stockyard, facing the stage."""
+        return self.depot_x - self.into_yard * length * .5
 
     def estimate_trip(self):
         """Typical seconds for one delivery: pallet, up the ladders, place, back down."""
@@ -681,7 +728,7 @@ class World:
         if self.watched:  # rain and snow are only for looking at
             for key, count, spread in (("rain", 420, 1.0), ("snow", 260, 1.0)):
                 pool = self.drops[key]
-                want = int(e[key] * count)
+                want = int(e[key] * count * self.wide)
                 while len(pool) < want:  # new drops start above the screen, so a shower begins gently
                     pool.append([rng.uniform(-40, self.W + 40), rng.uniform(-self.H * spread, -5),
                                  rng.uniform(.8, 1.2), rng.uniform(0, 6)])
@@ -716,7 +763,7 @@ class World:
 
     def update(self, dt):
         self.update_weather(dt)
-        self.watched_for = self.watched_for + dt if self.watched else 0.0
+        self.watched_for = self.watched_for + dt if self.stage_watched else 0.0
         t_now = self.clock()
         self.night = self.is_night(t_now) if self.config.sky in ("clock", "loop") else self.config.sky == "night"
         target = 1.0 if self.night else 0.0
@@ -825,7 +872,8 @@ class World:
             cr = self.crane
             if cr and cr.present:  # the crane lowers itself, then a truck fetches it
                 cr.leaving = True
-                if cr.ready_to_go() and not any(t.crane == "out" for t in self.trucks):
+                if (cr.ready_to_go() and not any(t.crane == "out" for t in self.trucks)
+                        and not any(t.side == cr.side and t.state == "load" for t in self.trucks)):
                     self.trucks.append(Truck(self, cr.side, 0, 0, crane="out"))
             for side in (0, 1):  # take the scaffold down, working from the top to the ground
                 if sc.built[side] and not sc.crews[side] and free:
@@ -893,7 +941,8 @@ class World:
 
     def order_trucks(self):
         cr = self.crane
-        if cr and not cr.present and not cr.gone and not any(t.crane == "in" for t in self.trucks):
+        if (cr and not cr.present and not cr.gone and not any(t.crane == "in" for t in self.trucks)
+                and not any(t.side == cr.side and t.state == "load" for t in self.trucks)):
             self.trucks.append(Truck(self, cr.side, 0, 0, crane="in"))
         sc = self.scaffold
         for side in (0, 1):
@@ -1022,11 +1071,19 @@ class World:
         cr = cairo.Context(self.scenery)
         cr.rectangle(0, g, W, H - g)
         cr.fill()
-        camp = (min(self.rest_x, self.fire_x) - 40 * u, max(self.rest_x, self.fire_x) + 60 * u)
-        for _ in range(rng.randint(5, 9)):
-            x = rng.choice((rng.uniform(8, W * .14), rng.uniform(W * .86, W - 8)))
-            if camp[0] < x < camp[1]:
-                continue  # keep the campsite clear
+        clear = [(min(self.rest_x, self.fire_x) - 40 * u, max(self.rest_x, self.fire_x) + 60 * u)]
+        sw = self.x1 - self.x0
+        edges = [(self.x0 + 8, self.x0 + sw * .14), (self.x1 - sw * .14, self.x1 - 8)]
+        trees = rng.randint(5, 9)
+        if self.depot_x is not None:  # the stage's outer edge, and all over the yard
+            d = self.into_yard
+            edges = [edges[0] if d > 0 else edges[1], (self.x1, W - 8) if d > 0 else (8, self.x0)]
+            clear.append(tuple(sorted((self.depot_x - d * 45 * u, self.depot_x + d * 310 * u))))
+            trees += rng.randint(4, 7)
+        for _ in range(trees):
+            x = rng.uniform(*rng.choice(edges))
+            if any(a < x < b for a, b in clear):
+                continue  # keep the campsite and the stockyard clear
             kind = rng.random()
             th = rng.uniform(26, 58) * u
             cr.rectangle(x - 1 * u, g - th * .45, 2 * u, th * .45 + 1)
@@ -1099,6 +1156,36 @@ class World:
             cr.fill()
             cr.set_source_rgb(*self.sil)
 
+    def draw_depot(self, cr):
+        """The stockyard: stacked pallets and ladder sections that go down as the
+        trucks carry them off, and the truck itself, parked when it isn't out."""
+        if self.depot_x is None:
+            return
+        u, g, d = self.u, self.ground, self.into_yard
+        share, poles = self.depot_stock()
+        blocks = math.ceil(share * 6 * 20)
+        for k in range(6):  # pallets in a row behind the loading bay
+            px = self.depot_x + d * (62 + k * 33) * u
+            n = max(0, min(20, blocks - k * 20))
+            cr.rectangle(px - 15 * u, g - 2 * u, 30 * u, 2 * u)
+            for i in range(n):
+                row, col = divmod(i, 5)
+                cr.rectangle(px - 14 * u + col * 5.6 * u + row * 1.4 * u, g - 2 * u - (row + 1) * 4.4 * u,
+                             5 * u, 3.9 * u)
+        cr.fill()
+        rx = self.depot_x + d * 268 * u  # a rack of ladder sections at the end
+        cr.rectangle(rx - 2 * u, g - 24 * u, 2 * u, 24 * u)
+        cr.rectangle(rx + 10 * u, g - 24 * u, 2 * u, 24 * u)
+        cr.fill()
+        cr.set_line_width(1.3 * u)
+        for i in range(min(10, poles)):
+            y = g - 3 * u - i * 2.2 * u
+            cr.move_to(rx - 9 * u, y)
+            cr.line_to(rx + 19 * u, y)
+        cr.stroke()
+        if not any(t.side == self.yard_side for t in self.trucks):
+            self.parked.draw(cr)
+
     def draw_sky_weather(self, cr):
         """Behind the scene: the overcast veil and drifting clouds."""
         e, u, p = self.wxe, self.u, self.pal
@@ -1119,7 +1206,7 @@ class World:
             cr.set_source(veil)
             cr.arc(sx, sy, 230 * u, 0, math.tau)
             cr.fill()
-        shown = 2 + e["cloud"] * (len(self.clouds) - 2)
+        shown = (2 + e["cloud"] * 14) * self.wide
         day_col = mix(p["horizon"], (1, 1, 1), .55)
         col = mix(mix(day_col, mix(p["top"], p["far"], .6), night), (.42, .44, .5), e["cloud"] * .7)
         for i, (x, y, _, (cw, bumps), shade) in enumerate(self.clouds):
@@ -1229,8 +1316,14 @@ class World:
         cr.fill()
         cr.set_source_rgb(*self.sil)
 
-    def render(self):
+    def render(self, clip=None):
+        """Draw the scene; clip: the x ranges in view (the rest is left as it was)."""
         cr, u = self.cr, self.u
+        cr.save()
+        if clip is not None:
+            for a, b in clip:
+                cr.rectangle(a, 0, b - a, self.H)
+            cr.clip()
         cr.set_operator(cairo.OPERATOR_CLEAR)
         cr.paint()
         cr.set_operator(cairo.OPERATOR_OVER)
@@ -1255,6 +1348,7 @@ class World:
         if self.crane:
             self.crane.draw(cr)
         self.draw_site(cr)
+        self.draw_depot(cr)
         for t in self.trucks:
             t.draw(cr)
         self.draw_campfire(cr)
@@ -1316,6 +1410,7 @@ class World:
         if d and d.flash > 0:
             cr.set_source_rgba(1, .97, .85, d.flash * .75)
             cr.paint()
+        cr.restore()
         self.fg.flush()
         return self.fg
 

@@ -28,6 +28,7 @@ DISASTERS = {"kaiju": "Kaiju", "kraken": "Kraken", "dragon": "Dragon", "tripods"
              "giant-ape": "Giant ape", "ufo": "UFO", "space-battle": "Space battle"}
 SKY_MODES = ("clock", "loop", "dawn", "day", "sunset", "night")
 WEATHER_MODES = ("live", "off", "clear", "rain", "snow", "storm", "fog")
+MONITOR_MODES = ("span", "separate")
 UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
 
 TEMPLATE = """\
@@ -49,7 +50,16 @@ weather = "{weather}"
 # Behind the scene: "live" for the drawn landscape, or the path of a picture.
 background = "{background}"
 
-# Smallest crew on each monitor. Short cycles hire more workers (up to 40)
+# With several monitors: "span" makes them one wide scene, the wonder on one
+# monitor and the crew's yard (container, campfire, stockyard) next to it;
+# "separate" gives every monitor a wonder of its own.
+monitors = "{monitors}"
+
+# The monitor the wonder goes up on when spanning, e.g. "HDMI-A-1" (see
+# `hyprctl monitors`). Empty: the biggest one.
+wonder_monitor = "{wonder_monitor}"
+
+# Smallest crew on each scene. Short cycles hire more workers (up to 40)
 # and, if that is still not enough, the crew works in time-lapse.
 workers = {workers}
 
@@ -82,6 +92,8 @@ class Config:
         self.background = "live"
         self.weather = "live"
         self.workers = 9
+        self.monitors = "span"
+        self.wonder_monitor = ""
         self.wonders = list(WONDERS)
         self.disasters = list(DISASTERS)
         if not path.exists():
@@ -109,6 +121,9 @@ class Config:
             weather = data.get("weather", "live")
             self.weather = weather if weather in WEATHER_MODES else "live"
             self.workers = max(2, min(30, int(data.get("workers", 9))))
+            monitors = data.get("monitors", "span")
+            self.monitors = monitors if monitors in MONITOR_MODES else "span"
+            self.wonder_monitor = str(data.get("wonder_monitor", ""))
             wonders = [w for w in data.get("wonders", WONDERS) if w in WONDERS]
             renamed = {"starwars": "space-battle", "tsunami": "kraken", "tornado": "dragon",  # older settings
                        "meteor": "tripods", "earthquake": "giant-ape"}
@@ -124,7 +139,7 @@ class Config:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         text = TEMPLATE.format(
             cycle=self.cycle_text, sky=self.sky, sky_loop=self.sky_loop_text, workers=self.workers,
-            weather=self.weather,
+            weather=self.weather, monitors=self.monitors, wonder_monitor=self.wonder_monitor,
             background=self.background.replace("\\", "\\\\").replace('"', '\\"'),
             wonders="\n".join(f'  "{w}",' for w in WONDERS if w in self.wonders),
             disasters="\n".join(f'  "{d}",' for d in DISASTERS if d in self.disasters))

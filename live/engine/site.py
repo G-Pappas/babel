@@ -146,12 +146,14 @@ class Scaffold:
 
 class Truck:
     """A flatbed that drives in from its side of the screen, unloads at the
-    pallet, and backs out again."""
+    pallet, and backs out again. On the yard's side it starts from the stockyard
+    instead: loads up there, and backs into its bay again afterwards."""
 
     SPEED = 70.0
     UNLOAD = 3.0
+    LOAD = 4.0
 
-    def __init__(self, world, side, blocks, poles, crane=None):
+    def __init__(self, world, side, blocks, poles, crane=None, parked=False):
         self.w = world
         self.side = side
         self.blocks, self.poles = blocks, poles
@@ -162,16 +164,25 @@ class Truck:
         self.length = 66 * u
         self.dir = 1 if side == 0 else -1          # facing direction
         self.x = -self.length - 10 * u if side == 0 else world.W + self.length + 10 * u  # front bumper
-        pile = world.crane.x if crane else world.piles[side]
-        self.stop = pile - 12 * u if side == 0 else pile + 12 * u
+        self.bay = world.depot_bay(self.length) if side == world.yard_side else None
         self.state, self.t = "in", 0.0
+        if self.bay is not None:
+            self.x = self.bay
+            self.state = "parked" if parked else "load"
+        if not parked:
+            pile = world.crane.x if crane else world.piles[side]
+            self.stop = pile - 12 * u if side == 0 else pile + 12 * u
         self.done = False
         self.wheel = 0.0
 
     def update(self, dt):
         w, u = self.w, self.w.u
         v = self.SPEED * u * dt
-        if self.state == "in":
+        if self.state == "load":  # loading up at the stockyard
+            self.t += dt
+            if self.t >= self.LOAD:
+                self.state, self.t = "in", 0.0
+        elif self.state == "in":
             d = self.stop - self.x
             if abs(d) <= v:
                 self.x = self.stop
@@ -202,6 +213,8 @@ class Truck:
         else:
             self.x -= self.dir * v * 1.3
             self.wheel -= v
+            if self.bay is not None and (self.x - self.bay) * self.dir <= 0:
+                self.done = True  # back in its bay (the parked truck takes over)
             if self.x < -self.length - 20 * u or self.x > w.W + self.length + 20 * u:
                 self.done = True
 
@@ -224,6 +237,8 @@ class Truck:
             cr.arc(wx, g - 5 * u, 5 * u, 0, math.tau)
             cr.fill()
         rows = min(3, 1 + self.blocks * 3 // self.load0) if self.blocks else 0
+        if self.state == "load":  # the load goes on a row at a time
+            rows = min(rows, int(self.t / self.LOAD * (rows + 1)))
         if self.blocks:
             for r in range(rows):
                 for i in range(6):

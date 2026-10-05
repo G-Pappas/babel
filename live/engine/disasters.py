@@ -32,7 +32,7 @@ class Disaster:
         self.done = False
         self.shake = 0.0
         self.flash = 0.0
-        self.origin_x = w.W / 2
+        self.origin_x = (w.x0 + w.x1) / 2
 
     def update(self, dt):
         self.t += dt
@@ -109,7 +109,7 @@ class Kaiju(Disaster):
         super().__init__(w)
         self.hk = int(min(w.H * .62, max(230 * self.u, (w.ground - w.mtop) * .8)))
         self.wk, self.frames = kaiju_masks(self.hk)
-        self.dir = w.rng.choice((-1, 1))
+        self.dir = w.inward()
         self.x = w.W + 5 if self.dir < 0 else -self.wk - 5
         self.origin_x = self.x + self.wk / 2
         self.state, self.st = "enter", 0.0
@@ -280,7 +280,7 @@ class Dragon(Disaster):
     def __init__(self, w):
         super().__init__(w)
         u, rng = self.u, w.rng
-        self.f = rng.choice((-1, 1))
+        self.f = w.inward()
         self.cx = (w.mx0 + w.mx1) / 2
         self.x = -160 * u if self.f > 0 else w.W + 160 * u
         self.base_y = max(95 * u, w.mtop - 45 * u)
@@ -715,7 +715,7 @@ class GiantApe(Disaster):
         u, rng = self.u, w.rng
         self.h = max(120 * u, min(190 * u, (w.ground - w.mtop) * .42))
         self.mount = w.ground - w.mtop < 1.35 * self.h   # low enough to stand on top of
-        self.f = rng.choice((-1, 1))              # faces the monument
+        self.f = w.inward()                       # faces the monument
         self.x = -90 * u if self.f > 0 else w.W + 90 * u
         self.y = w.ground
         self.origin_x = (w.mx0 + w.mx1) / 2
@@ -1030,7 +1030,7 @@ class UFO(Disaster):
     def __init__(self, w):
         super().__init__(w)
         u = self.u
-        side = w.rng.choice((-1, 1))
+        side = -w.inward()
         self.start = (w.W / 2 + side * (w.W / 2 + 80 * u), 50 * u)
         self.hover = ((w.mx0 + w.mx1) / 2, max(45 * u, w.mtop - 80 * u))
         self.ux, self.uy = self.start
@@ -1147,7 +1147,7 @@ class SpaceBattle(Disaster):
         u, rng = self.u, w.rng
         self.side = rng.choice((-1, 1))
         self.R = 52 * u
-        self.sx = w.W / 2 + self.side * w.W * .3
+        self.sx = (w.x0 + w.x1) / 2 + self.side * (w.x1 - w.x0) * .3
         self.sy = max(self.R + 20 * u, w.mtop - 110 * u)
         self.target = ((w.mx0 + w.mx1) / 2, w.mtop + (w.ground - w.mtop) * .45)
         self.origin_x = self.target[0]

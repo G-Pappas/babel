@@ -15,7 +15,9 @@
   babel-theme toggle wonder NAME    switch a monument on or off
   babel-theme toggle disaster NAME  switch a disaster on or off
   babel-theme reset                 switch every wonder and disaster back on
-  babel-theme workers 9             smallest crew per monitor
+  babel-theme workers 9             smallest crew per scene
+  babel-theme monitors span         span | separate: one scene across all monitors, or one each
+  babel-theme wonder-monitor NAME   the monitor the wonder goes up on when spanning (auto: the biggest)
   babel-theme disaster-now          make the running wallpaper's disaster happen now
   babel-theme edit                  open the settings file
 """
@@ -33,7 +35,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from engine.config import (CONFIG_PATH, DISASTERS, SKY_MODES, WEATHER_MODES, WONDERS, Config,  # noqa: E402
+from engine.config import (CONFIG_PATH, DISASTERS, MONITOR_MODES, SKY_MODES, WEATHER_MODES, WONDERS,  # noqa: E402
+                           Config,
                            parse_duration)
 
 REPO = HERE.parent                                   # this checkout: theme files and plugin at its root
@@ -244,7 +247,7 @@ def cmd_status(cfg, as_json=False):
             "setUp": (HOOKS / "theme-set.d" / "babel-live").is_symlink(),
             "cycle": cfg.cycle_text, "sky": cfg.sky, "skyLoop": cfg.sky_loop_text,
             "background": cfg.background, "workers": cfg.workers, "weather": cfg.weather,
-            "weatherNow": weather_now(),
+            "weatherNow": weather_now(), "monitorMode": cfg.monitors, "wonderMonitor": cfg.wonder_monitor,
             "wonders": [{"id": k, "label": v, "on": k in cfg.wonders} for k, v in WONDERS.items()],
             "disasters": [{"id": k, "label": v, "on": k in cfg.disasters} for k, v in DISASTERS.items()],
             "monitors": [dict(m, label=WONDERS.get(m.get("monument"), m.get("monument")))
@@ -257,6 +260,8 @@ def cmd_status(cfg, as_json=False):
     print(f"background   : {cfg.background}")
     print(f"weather      : {cfg.weather}" + (f" ({weather_now()})" if cfg.weather == "live" and weather_now() else ""))
     print(f"workers      : {cfg.workers}")
+    print(f"monitors     : {cfg.monitors}" + (f" (wonder on {cfg.wonder_monitor or 'the biggest'})"
+                                               if cfg.monitors == "span" else ""))
     print("wonders      : " + ", ".join(WONDERS[w] for w in cfg.wonders))
     print("disasters    : " + ", ".join(DISASTERS[d] for d in cfg.disasters))
 
@@ -313,6 +318,14 @@ def main(argv):
         cfg.workers = max(2, min(30, int(rest[0])))
         cfg.save()
         return notify(f"Crew: at least {cfg.workers} workers")
+    if cmd == "monitors" and rest and rest[0] in MONITOR_MODES:
+        cfg.monitors = rest[0]
+        cfg.save()
+        return notify("Monitors: one scene across them all" if rest[0] == "span" else "Monitors: a wonder on each")
+    if cmd == "wonder-monitor" and rest:
+        cfg.wonder_monitor = "" if rest[0] == "auto" else rest[0]
+        cfg.save()
+        return notify(f"The wonder goes up on {cfg.wonder_monitor or 'the biggest monitor'}")
     if cmd == "background" and rest:
         choice = rest[0]
         if choice == "pick":

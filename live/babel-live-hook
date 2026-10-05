@@ -5,11 +5,20 @@
 THEME=${1:-$(cat "$HOME/.local/state/omarchy/current/theme.name" 2>/dev/null)}
 LIVE="$HOME/.config/omarchy/themes/babel/live/babel-live.py"
 REAL=$(readlink -f "$LIVE")
-MATCH="^(/usr/bin/)?python3 ($LIVE|$REAL)\$"
+
+# Running copies of this wallpaper, however the path to it was spelled when it started
+running() {
+  local pid script
+  for pid in $(pgrep -f 'babel-live\.py$'); do
+    script=$(tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | sed -n 2p)
+    [[ -n $script && $(readlink -f "$script" 2>/dev/null) == "$REAL" ]] && echo "$pid"
+  done
+}
 
 if [[ $THEME == babel ]]; then
-  pgrep -f "$MATCH" >/dev/null || setsid -f python3 "$REAL" >/dev/null 2>&1
+  [[ -n $(running) ]] || setsid -f python3 "$REAL" >/dev/null 2>&1
 else
-  pkill -f "$MATCH"
+  pids=$(running)
+  [[ -n $pids ]] && kill $pids
 fi
 exit 0

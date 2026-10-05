@@ -17,6 +17,7 @@ from pathlib import Path
 OMARCHY_LOCATION = Path.home() / ".local/state/omarchy/settings/weather.json"
 CACHE = Path.home() / ".cache/babel-live/weather.json"
 REFRESH = 20 * 60
+MAX_REPLY = 256 * 1024  # the answers are a few hundred bytes; never read an endless one
 FORCED = {  # weather setting -> what to show, for when the user pins it
     "clear": {"kind": "clear", "amount": 0.0, "cloud": 0.1},
     "rain": {"kind": "rain", "amount": .7, "cloud": .8},
@@ -85,7 +86,7 @@ class Weather:
     def _get(self, url):
         req = urllib.request.Request(url, headers={"User-Agent": "babel-live (Omarchy theme)"})
         with urllib.request.urlopen(req, timeout=8) as r:
-            return r.read().decode()
+            return r.read(MAX_REPLY).decode(errors="replace")
 
     def _location(self):
         try:
@@ -105,7 +106,7 @@ class Weather:
         found = json.loads(self._get("https://geocoding-api.open-meteo.com/v1/search?count=1&name="
                                      + urllib.parse.quote(name)))
         hit = (found.get("results") or [None])[0]
-        return (hit["latitude"], hit["longitude"], hit.get("name", name)) if hit else None
+        return (float(hit["latitude"]), float(hit["longitude"]), hit.get("name", name)) if hit else None
 
     def _fetch(self):
         try:
@@ -113,6 +114,10 @@ class Weather:
             if not loc:
                 raise ValueError("location not found")
             lat, lon, place = loc
+            if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+                raise ValueError("bad coordinates")
+            # shown in the bar: keep a remote answer to a short line of plain text
+            place = "".join(ch for ch in str(place) if ch.isprintable())[:60]
             data = json.loads(self._get(
                 "https://api.open-meteo.com/v1/forecast?latitude=%s&longitude=%s"
                 "&current=weather_code,cloud_cover,wind_speed_10m,wind_direction_10m" % (lat, lon)))

@@ -24,6 +24,7 @@
 
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -71,7 +72,8 @@ def current_theme():
 # ------------------------------------------------------------------ menu
 
 def menu_block():
-    cli = '"$HOME/.config/omarchy/themes/babel/live/babel-theme"'
+    # through python3, so it works even where the checkout can't keep its exec bit
+    cli = 'python3 "$HOME/.config/omarchy/themes/babel/live/babel-theme"'
     conf = '"$HOME/.config/babel-live/config.toml"'
 
     def has(line):
@@ -312,12 +314,12 @@ def main(argv):
         return cmd_status(cfg, "--json" in rest)
     if cmd == "sky-loop" and rest:
         parse_duration(rest[0])
-        cfg.sky_loop_text = rest[0]
+        cfg.sky_loop_text = rest[0].strip()
         cfg.save()
         return notify(f"A whole day every {rest[0]}")
     if cmd == "cycle" and rest:
         parse_duration(rest[0])
-        cfg.cycle_text = rest[0]
+        cfg.cycle_text = rest[0].strip()
         cfg.save()
         return notify(f"Loop length: {rest[0]}")
     if cmd == "sky" and rest and rest[0] in SKY_MODES:
@@ -336,7 +338,7 @@ def main(argv):
         cfg.monitors = rest[0]
         cfg.save()
         return notify("Monitors: one scene across them all" if rest[0] == "span" else "Monitors: a wonder on each")
-    if cmd == "wonder-monitor" and rest:
+    if cmd == "wonder-monitor" and rest and re.fullmatch(r"[A-Za-z0-9._-]{1,64}", rest[0]):  # a connector name
         cfg.wonder_monitor = "" if rest[0] == "auto" else rest[0]
         cfg.monitors = "span"  # choosing where the wonder goes means one scene across them
         cfg.save()

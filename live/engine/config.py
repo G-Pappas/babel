@@ -48,7 +48,7 @@ sky_loop = "{sky_loop}"
 weather = "{weather}"
 
 # Behind the scene: "live" for the drawn landscape, or the path of a picture.
-background = "{background}"
+background = {background}
 
 # With several monitors: "span" makes them one wide scene, the wonder on one
 # monitor and the crew's yard (container, campfire, stockyard) next to it;
@@ -57,7 +57,7 @@ monitors = "{monitors}"
 
 # The monitor the wonder goes up on when spanning, e.g. "HDMI-A-1" (see
 # `hyprctl monitors`). Empty: the biggest one.
-wonder_monitor = "{wonder_monitor}"
+wonder_monitor = {wonder_monitor}
 
 # Smallest crew on each scene. Short cycles hire more workers (up to 40)
 # and, if that is still not enough, the crew works in time-lapse.
@@ -71,6 +71,12 @@ disasters = [
 {disasters}
 ]
 """
+
+
+def toml_str(text):
+    """A TOML string: JSON's escaping is valid TOML, so quotes, backslashes and
+    newlines in a path can't break out of the line."""
+    return json.dumps(str(text), ensure_ascii=False)
 
 
 def parse_duration(text):
@@ -139,8 +145,8 @@ class Config:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         text = TEMPLATE.format(
             cycle=self.cycle_text, sky=self.sky, sky_loop=self.sky_loop_text, workers=self.workers,
-            weather=self.weather, monitors=self.monitors, wonder_monitor=self.wonder_monitor,
-            background=self.background.replace("\\", "\\\\").replace('"', '\\"'),
+            weather=self.weather, monitors=self.monitors, wonder_monitor=toml_str(self.wonder_monitor),
+            background=toml_str(self.background),
             wonders="\n".join(f'  "{w}",' for w in WONDERS if w in self.wonders),
             disasters="\n".join(f'  "{d}",' for d in DISASTERS if d in self.disasters))
         tmp = self.path.with_suffix(".tmp")

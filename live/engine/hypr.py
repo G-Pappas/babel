@@ -13,8 +13,8 @@ from pathlib import Path
 class Hyprland:
     def __init__(self):
         sig = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
-        runtime = os.environ.get("XDG_RUNTIME_DIR", "/tmp")
-        base = Path(runtime) / "hypr" / sig if sig else None
+        runtime = os.environ.get("XDG_RUNTIME_DIR")  # never a shared /tmp fallback
+        base = Path(runtime) / "hypr" / sig if sig and runtime else None
         self.request_path = base / ".socket.sock" if base else None
         self.event_path = base / ".socket2.sock" if base else None
         self.available = bool(self.request_path and self.request_path.exists())

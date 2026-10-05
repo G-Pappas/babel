@@ -51,7 +51,7 @@ Panel {
   }
 
   function run(args) {
-    Quickshell.execDetached([root.cli].concat(args))
+    Quickshell.execDetached(["python3", root.cli].concat(args))
     refreshSoon.restart()
   }
 
@@ -76,7 +76,8 @@ Panel {
 
   Process {
     id: statusProc
-    command: [root.cli, "status", "--json"]
+    // bounded in time and size, so a stuck or runaway status can't hold the shell
+    command: ["sh", "-c", "timeout 5 python3 \"$1\" status --json | head -c 65536", "babel-status", root.cli]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {

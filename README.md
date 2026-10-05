@@ -138,6 +138,9 @@ Click the Babel icon on the top bar:
 - **Weather:** live, off, or pin rain / snow / storm / fog
 - **Background:** the live landscape, or any picture (Omarchy's image picker opens; your own
   pictures can go in `~/.config/omarchy/backgrounds/babel/`)
+- **Wonder on** (only with more than one monitor): which monitor the wonder goes up on, the
+  others being the crew's yard: the biggest, a particular one, or **Each monitor** for a wonder
+  of its own on every monitor
 - **Wonders** and **Disasters:** click to switch each one on or off; **Reset** turns them all on
 - **Disaster now**, if you can't wait
 

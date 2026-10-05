@@ -236,6 +236,19 @@ def weather_now():
         return ""
 
 
+def screens():
+    """The monitors that are on, left to right: name and resolution, for choosing
+    where the wonder goes up."""
+    from engine.hypr import Hyprland
+    hypr = Hyprland()
+    try:
+        mons = hypr.request("monitors") if hypr.available else []
+    except (OSError, ValueError):
+        mons = []
+    mons = sorted((m for m in mons or [] if not m.get("disabled")), key=lambda m: (m["x"], m["y"]))
+    return [{"name": m["name"], "size": f'{m["width"]}×{m["height"]}'} for m in mons]
+
+
 def cmd_status(cfg, as_json=False):
     if as_json:
         try:
@@ -248,6 +261,7 @@ def cmd_status(cfg, as_json=False):
             "cycle": cfg.cycle_text, "sky": cfg.sky, "skyLoop": cfg.sky_loop_text,
             "background": cfg.background, "workers": cfg.workers, "weather": cfg.weather,
             "weatherNow": weather_now(), "monitorMode": cfg.monitors, "wonderMonitor": cfg.wonder_monitor,
+            "screens": screens(),
             "wonders": [{"id": k, "label": v, "on": k in cfg.wonders} for k, v in WONDERS.items()],
             "disasters": [{"id": k, "label": v, "on": k in cfg.disasters} for k, v in DISASTERS.items()],
             "monitors": [dict(m, label=WONDERS.get(m.get("monument"), m.get("monument")))
@@ -324,6 +338,7 @@ def main(argv):
         return notify("Monitors: one scene across them all" if rest[0] == "span" else "Monitors: a wonder on each")
     if cmd == "wonder-monitor" and rest:
         cfg.wonder_monitor = "" if rest[0] == "auto" else rest[0]
+        cfg.monitors = "span"  # choosing where the wonder goes means one scene across them
         cfg.save()
         return notify(f"The wonder goes up on {cfg.wonder_monitor or 'the biggest monitor'}")
     if cmd == "background" and rest:

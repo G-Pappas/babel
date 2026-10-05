@@ -22,7 +22,18 @@ Panel {
 
   property bool themeActive: false
   property var st: ({ setUp: true, cycle: "", sky: "", skyLoop: "", background: "live", weather: "live", weatherNow: "",
-                      wonders: [], disasters: [], monitors: [] })
+                      wonders: [], disasters: [], monitors: [], screens: [], monitorMode: "span", wonderMonitor: "" })
+
+  // With several monitors: the one the wonder goes up on (the others are the
+  // crew's yard), the biggest, or a wonder on each.
+  readonly property var wonderOptions: {
+    var o = [{ value: "auto", label: "Biggest", tooltip: "The biggest monitor" }]
+    var s = root.st.screens || []
+    for (var i = 0; i < s.length; i++)
+      o.push({ value: s[i].name, label: s[i].name, tooltip: s[i].size })
+    o.push({ value: "separate", label: "Each monitor", tooltip: "A wonder of its own on every monitor" })
+    return o
+  }
 
   readonly property string statusLine: {
     var m = root.st.monitors || []
@@ -254,6 +265,23 @@ Panel {
               selected: root.st.background !== "live"
               onClicked: { root.close(); root.run(["background", "pick"]) }
             }
+          }
+
+          Section {
+            visible: (root.st.screens || []).length > 1
+            text: "Wonder on"
+          }
+          ButtonGroup {
+            visible: (root.st.screens || []).length > 1
+            options: root.wonderOptions
+            // a chosen monitor that isn't plugged in: the wallpaper falls back to the biggest
+            value: root.st.monitorMode === "separate" ? "separate"
+              : (root.st.screens || []).some(function(m) { return m.name === root.st.wonderMonitor })
+                ? root.st.wonderMonitor : "auto"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            fontSize: Style.font.caption
+            onChanged: function(v) { root.run(v === "separate" ? ["monitors", "separate"] : ["wonder-monitor", v]) }
           }
 
           Section { text: "Wonders" }

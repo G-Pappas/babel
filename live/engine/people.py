@@ -327,7 +327,7 @@ class Worker:
         them only once it is finished."""
         w = self.w
         if self.level and not w.floor_done(self.level):
-            spans = [w.walkway(s, self.level) for s in (0, 1) if w.scaffold.progress[s][self.level] >= 1]
+            spans = [w.plank(s, self.level) for s in (0, 1) if w.scaffold.progress[s][self.level] >= 1]
             here = next(((lo, hi) for lo, hi in spans if lo - 1 <= self.x <= hi + 1), None)
             if here and not here[0] - 1 <= x <= here[1] + 1:
                 yield from self.walk_to(max(here[0], min(here[1], x)))  # to the end of this plank
@@ -675,6 +675,13 @@ class Worker:
         self.gone = True
         yield
 
-    def job_return(self, x):
-        self.hidden = self.gliding = False
+    def job_return(self, x, delay=0.0):
+        """Walk back onto the site after `delay` seconds out of sight, so the crew
+        comes back in single file rather than as one stacked figure."""
+        self.gliding = False
+        t = 0.0
+        while t < delay:
+            t += self.dt
+            yield
+        self.hidden = False
         yield from self.walk_to(x)

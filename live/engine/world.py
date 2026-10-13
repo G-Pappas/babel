@@ -413,7 +413,7 @@ class World:
                         g0 = x
                         while x <= b and not row[x]:
                             x += 1
-                        if x - g0 > 8 * self.u:  # narrower gaps are simply stepped over
+                        if x - g0 > 3 * self.u:  # narrower gaps are simply stepped over
                             self.deck_gaps[lv].append((self.ox + g0 - 1, self.ox + x + 1))
                     x += 1
         # unplaced, stackable blocks per level: a level is walkable once everything below is in
@@ -455,6 +455,16 @@ class World:
             far = max(lad, nxt) + 4 * self.u
             edge = self.ox + ext[1] if ext else min(lad, nxt)
         return min(far, edge), max(far, edge)
+
+    def plank(self, side, lv):
+        """The part of the walkway that's actually down: all of it once there's stone
+        under its far end to rest on, until then just a landing at the top of the ladder."""
+        lo, hi = self.walkway(side, lv)
+        wall_end = hi if side == 0 else lo
+        if not self.solid_near(wall_end + (2 if side == 0 else -2) * self.u, self.level_y(lv) + 3 * self.u, 3 * self.u):
+            lad = self.ladder_x(side, lv)
+            lo, hi = (lo, min(hi, lad + 8 * self.u)) if side == 0 else (max(lo, lad - 8 * self.u), hi)
+        return lo, hi
 
     def stand_x(self, b, side):
         """Where to stand to set block b: beside it, on the floor, a plank or the walkway."""
@@ -817,9 +827,22 @@ class World:
                 self.disaster = None
                 self.phase, self.phase_t = "recover", 0.0
                 self.hm0 = list(self.hm)
+                # the ones who fled come back in one at a time from each edge
+                # (and those still in view who stand together set off one after another)
+                edges = [[w for w in self.workers if w.hidden and (w.x < self.W / 2) == (e == 0)] for e in (0, 1)]
+                gaps = [self.recover_time() * .6 / max(1, len(q)) for q in edges]
+                started = []
                 for w in self.workers:
                     w.lucky = False
-                    w.assign(w.job_return(self.rng.uniform(self.site[0] - 40 * self.u, self.site[1] + 40 * self.u)))
+                    if w.hidden:
+                        e = 0 if w in edges[0] else 1
+                        delay = (edges[e].index(w) + self.rng.uniform(0, .3)) * gaps[e]
+                    else:
+                        near = sum(abs(o.x - w.x) < 6 * self.u for o in started)
+                        delay = (near + self.rng.uniform(0, .5)) * 1.5
+                        started.append(w)
+                    w.assign(w.job_return(self.rng.uniform(self.site[0] - 40 * self.u, self.site[1] + 40 * self.u),
+                                          delay))
                 self.spawn_t = 0.0
         elif self.phase == "recover":
             rt = self.recover_time()
